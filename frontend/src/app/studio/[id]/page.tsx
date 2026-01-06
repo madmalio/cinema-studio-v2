@@ -11,20 +11,37 @@ import {
   Settings,
   Download,
   Plus,
-  Box,
-  Loader2,
+  Trash2,
+  AlertTriangle,
+  MoreVertical,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-// Define Asset Interface
 interface Asset {
   id: number;
   type: string;
   name: string;
-  image_url: string; // The URL from the DB
+  image_path: string;
 }
 
 export default function StudioPage({
@@ -35,33 +52,156 @@ export default function StudioPage({
   const router = useRouter();
   const { id } = use(params);
 
-  // State
+  // Data State
   const [project, setProject] = useState<any>(null);
-  const [assets, setAssets] = useState<Asset[]>([]); // <--- REAL DATA STATE
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeShot, setActiveShot] = useState<string | null>(null);
 
-  // FETCH DATA
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        // 1. Get Project Details
-        const pRes = await fetch(`http://127.0.0.1:8000/projects/${id}`);
-        if (pRes.ok) setProject(await pRes.json());
+  // Modal States
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-        // 2. Get Assets (We need to build this endpoint next!)
-        // const aRes = await fetch(`http://127.0.0.1:8000/projects/${id}/assets`);
-        // if (aRes.ok) setAssets(await aRes.json().assets);
-      } catch (error) {
-        console.error("Failed to fetch data", error);
-      } finally {
-        setLoading(false);
+  // Selection State
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [newName, setNewName] = useState("");
+
+  // FETCH DATA
+  async function fetchData() {
+    try {
+      const pRes = await fetch(`http://127.0.0.1:8000/projects/${id}`);
+      if (pRes.ok) setProject(await pRes.json());
+
+      const aRes = await fetch(`http://127.0.0.1:8000/projects/${id}/assets`);
+      if (aRes.ok) {
+        const data = await aRes.json();
+        setAssets(data.assets);
       }
+    } catch (error) {
+      console.error("Failed to fetch data", error);
+    } finally {
+      setLoading(false);
     }
+  }
+
+  useEffect(() => {
     fetchData();
   }, [id]);
 
-  // Filter assets by tab
+  // --- ACTIONS ---
+
+  // 1. Prepare Edit
+  const openEditModal = (e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation();
+    setSelectedAsset(asset);
+    setNewName(asset.name);
+    setIsEditModalOpen(true);
+  };
+
+  // 2. Prepare Delete
+  const openDeleteModal = (e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation();
+    setSelectedAsset(asset);
+    setIsDeleteModalOpen(true);
+  };
+
+  // 3. Confirm Edit (Rename)
+  const handleRenameAsset = async () => {
+    if (!selectedAsset || !newName) return;
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/assets/${selectedAsset.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName }),
+        }
+      );
+
+      if (res.ok) {
+        // Update local state without refreshing
+        setAssets(
+          assets.map((a) =>
+            a.id === selectedAsset.id ? { ...a, name: newName } : a
+          )
+        );
+        setIsEditModalOpen(false);
+      }
+    } catch (error) {
+      console.error("Failed to rename", error);
+    }
+  };
+
+  // 4. Confirm Delete
+  const handleConfirmDelete = async () => {
+    if (!selectedAsset) return;
+
+    try {
+      await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
+        method: "DELETE",
+      });
+
+      // Update local state
+      setAssets(assets.filter((a) => a.id !== selectedAsset.id));
+      if (activeShot === selectedAsset.image_path) setActiveShot(null);
+
+      setIsDeleteModalOpen(false);
+      setSelectedAsset(null);
+    } catch (error) {
+      console.error("Failed to delete", error);
+    }
+  };
+
+  // Asset Card Component
+  const AssetCard = ({ asset }: { asset: Asset }) => (
+    <div
+      onClick={() => setActiveShot(asset.image_path)}
+      className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-pointer group relative transition-all"
+    >
+      <img
+        src={asset.image_path}
+        alt={asset.name}
+        className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+      />
+
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-bold text-white truncate max-w-[70%]">
+            {asset.name}
+          </p>
+
+          {/* KEBAB MENU */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="p-1 hover:bg-zinc-800 rounded-md text-zinc-300 hover:text-white transition-colors"
+              >
+                <MoreVertical size={14} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white min-w-[120px]">
+              <DropdownMenuItem
+                onClick={(e) => openEditModal(e, asset)}
+                className="text-xs cursor-pointer hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white"
+              >
+                <Pencil size={12} className="mr-2" /> Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => openDeleteModal(e, asset)}
+                className="text-xs cursor-pointer text-red-500 hover:bg-red-900/20 focus:bg-red-900/20 focus:text-red-500"
+              >
+                <Trash2 size={12} className="mr-2" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    </div>
+  );
+
   const castAssets = assets.filter((a) => a.type === "cast");
   const locAssets = assets.filter((a) => a.type === "loc");
   const propAssets = assets.filter((a) => a.type === "prop");
@@ -118,40 +258,20 @@ export default function StudioPage({
           </div>
 
           <ScrollArea className="flex-1 p-4">
-            {/* CAST TAB */}
+            {/* TABS CONTENT */}
             <TabsContent value="cast" className="mt-0 space-y-4">
               <Link href={`/studio/${id}/generate/cast`} className="block">
                 <Button className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-9 shadow-[0_0_10px_rgba(210,255,68,0.1)]">
                   <Plus size={14} className="mr-1" /> Generate Actor
                 </Button>
               </Link>
-
               <div className="grid grid-cols-2 gap-2">
-                {/* REAL DATA MAPPING */}
-                {castAssets.length > 0 ? (
-                  castAssets.map((asset, i) => (
-                    <Link key={i} href={`/studio/${id}/view/${asset.id}`}>
-                      <div className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-pointer group relative transition-all">
-                        <img
-                          src={asset.image_url}
-                          alt={asset.name}
-                          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-                        />
-                        <p className="absolute bottom-1 left-1 text-[10px] font-bold text-white drop-shadow-md">
-                          {asset.name}
-                        </p>
-                      </div>
-                    </Link>
-                  ))
-                ) : (
-                  <div className="col-span-2 py-8 text-center opacity-30 text-xs">
-                    No actors yet
-                  </div>
-                )}
+                {castAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
               </div>
             </TabsContent>
 
-            {/* LOCATIONS TAB */}
             <TabsContent value="loc" className="mt-0 space-y-4">
               <Link href={`/studio/${id}/generate/loc`} className="block">
                 <Button className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-9 shadow-[0_0_10px_rgba(210,255,68,0.1)]">
@@ -159,46 +279,32 @@ export default function StudioPage({
                 </Button>
               </Link>
               <div className="grid grid-cols-2 gap-2">
-                {/* REAL DATA MAPPING */}
-                {locAssets.length > 0 ? (
-                  locAssets.map((asset, i) => (
-                    <Link key={i} href={`/studio/${id}/view/${asset.id}`}>
-                      <div className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-pointer group relative transition-all">
-                        <img
-                          src={asset.image_url}
-                          alt={asset.name}
-                          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-                        />
-                      </div>
-                    </Link>
-                  ))
-                ) : (
-                  <div className="col-span-2 py-8 text-center opacity-30 text-xs">
-                    No locations yet
-                  </div>
-                )}
+                {locAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
               </div>
             </TabsContent>
 
-            {/* PROPS TAB */}
             <TabsContent value="props" className="mt-0 space-y-4">
               <Link href={`/studio/${id}/generate/prop`} className="block">
                 <Button className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-9 shadow-[0_0_10px_rgba(210,255,68,0.1)]">
                   <Plus size={14} className="mr-1" /> Generate Prop
                 </Button>
               </Link>
-              <div className="flex flex-col items-center justify-center h-32 opacity-30">
-                <Box size={24} className="mb-2" />
-                <p className="text-xs">No props created</p>
+              <div className="grid grid-cols-2 gap-2">
+                {propAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
               </div>
             </TabsContent>
           </ScrollArea>
         </Tabs>
       </div>
 
-      {/* CENTER: STAGE (Unchanged for now) */}
+      {/* CENTER STAGE */}
       <div className="flex-1 flex flex-col relative bg-zinc-950">
         <div className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/30 backdrop-blur-sm">
+          {/* ... Header Content ... */}
           <div className="flex items-center gap-2 text-zinc-400">
             <Wand2 size={16} className="text-[#D2FF44]" />
             <span className="text-xs font-bold text-zinc-200">
@@ -220,13 +326,6 @@ export default function StudioPage({
             >
               <Download size={14} className="mr-2" /> Export
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0 text-zinc-500 hover:text-white"
-            >
-              <Settings size={16} />
-            </Button>
           </div>
         </div>
 
@@ -243,13 +342,13 @@ export default function StudioPage({
                 <Users size={32} />
               </div>
               <p className="text-sm font-medium text-zinc-500">
-                Drag an Asset here to start a scene
+                Select an Asset to view
               </p>
             </div>
           )}
         </div>
 
-        {/* Timeline (Unchanged) */}
+        {/* Timeline */}
         <div className="h-52 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-md flex flex-col z-10">
           <div className="h-9 border-b border-zinc-800/50 flex items-center px-4 justify-between bg-zinc-950/50">
             <div className="flex items-center gap-2">
@@ -266,12 +365,87 @@ export default function StudioPage({
             </Button>
           </div>
           <ScrollArea className="flex-1 w-full whitespace-nowrap p-4">
-            <div className="flex gap-3 pb-2">
-              {/* Timeline items logic can remain mocked for now */}
-            </div>
+            {/* Timeline Content */}
           </ScrollArea>
         </div>
       </div>
+
+      {/* MODAL: DELETE CONFIRMATION */}
+      <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
+        <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md shadow-[0_0_30px_rgba(210,255,68,0.2)]">
+          <DialogHeader>
+            <div className="flex items-center gap-2 text-[#D2FF44] mb-2">
+              <AlertTriangle
+                size={24}
+                className="fill-current text-black stroke-[#D2FF44]"
+              />
+              <DialogTitle className="text-xl font-bold text-white">
+                Delete Asset?
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-zinc-400">
+              This action cannot be undone. This will permanently delete{" "}
+              <span className="text-[#D2FF44] font-bold">
+                "{selectedAsset?.name}"
+              </span>
+              .
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button
+              variant="ghost"
+              onClick={() => setIsDeleteModalOpen(false)}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-900"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmDelete}
+              className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold border border-[#D2FF44]"
+            >
+              Delete Asset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: EDIT NAME */}
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <Pencil size={18} className="text-[#D2FF44]" /> Edit Asset Details
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs uppercase font-bold text-zinc-500">
+                Asset Name
+              </Label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 focus-visible:ring-[#D2FF44]"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setIsEditModalOpen(false)}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRenameAsset}
+              className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold"
+            >
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

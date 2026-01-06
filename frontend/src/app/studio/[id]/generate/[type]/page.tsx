@@ -1,44 +1,71 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { useRouter } from "next/navigation"; // <--- Added this
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Wand2, Dice5, Save, Sparkles, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Wand2,
+  Dice5,
+  Save,
+  Loader2,
+  Camera,
+  Aperture,
+  Film,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SelectGroup,
+  SelectLabel,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
 export default function GeneratorPage({
   params,
 }: {
   params: Promise<{ id: string; type: string }>;
 }) {
-  const router = useRouter(); // <--- Initialize Router
+  const router = useRouter();
   const { id, type } = use(params);
 
   // Data State
   const [projectName, setProjectName] = useState<string>(`Project #${id}`);
+  const [projectRatio, setProjectRatio] = useState<string>("16:9");
   const [loadingProject, setLoadingProject] = useState(true);
 
-  // Generation State
+  // Gen State
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [assetId, setAssetId] = useState<number | null>(null);
 
   // Form State
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
 
+  // Camera State
+  const [selectedCamera, setSelectedCamera] = useState("Arri Alexa 35");
+  const [selectedLens, setSelectedLens] = useState("Cooke S4/i Prime");
+  const [selectedFocal, setSelectedFocal] = useState("35mm");
+
   const typeLabel =
     type === "loc" ? "Location" : type.charAt(0).toUpperCase() + type.slice(1);
 
-  // 1. Fetch Project Name
   useEffect(() => {
-    async function fetchProjectName() {
+    async function fetchProject() {
       try {
         const res = await fetch(`http://127.0.0.1:8000/projects/${id}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.name) setProjectName(data.name);
+          setProjectName(data.name || "Untitled");
+          if (data.aspect_ratio) setProjectRatio(data.aspect_ratio);
         }
       } catch (error) {
         console.error("Failed to fetch project", error);
@@ -46,18 +73,57 @@ export default function GeneratorPage({
         setLoadingProject(false);
       }
     }
-    fetchProjectName();
+    fetchProject();
   }, [id]);
 
-  // 2. Mock Generation Handler
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    if (!prompt) return;
     setIsGenerating(true);
-    setTimeout(() => {
+    setGeneratedImage(null);
+    setAssetId(null);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: id,
+          type: type,
+          prompt: prompt,
+          camera: selectedCamera,
+          lens: selectedLens,
+          focal_length: selectedFocal,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setGeneratedImage(data.image_url);
+        setAssetId(data.asset_id);
+      } else {
+        alert("Error: " + data.error);
+      }
+    } catch (error) {
+      console.error("API Call failed", error);
+    } finally {
       setIsGenerating(false);
-      setGeneratedImage(
-        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800&q=80"
-      );
-    }, 3000);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!assetId) return;
+    try {
+      if (name) {
+        await fetch(`http://127.0.0.1:8000/assets/${assetId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name }),
+        });
+      }
+      router.push(`/studio/${id}`);
+    } catch (error) {
+      console.error("Failed to save", error);
+    }
   };
 
   return (
@@ -76,14 +142,19 @@ export default function GeneratorPage({
               <Wand2 size={18} className="text-[#D2FF44]" />
               Generate {typeLabel}
             </h1>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono">
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono flex items-center gap-2">
               {loadingProject ? "Loading..." : projectName}
+              <span className="w-1 h-1 bg-zinc-600 rounded-full" />
+              <Badge
+                variant="outline"
+                className="text-[9px] h-4 px-1 border-zinc-700 text-zinc-400"
+              >
+                {projectRatio}
+              </Badge>
             </p>
           </div>
         </div>
-
         <div className="flex items-center gap-2">
-          {/* CANCEL BUTTON: NOW WORKING */}
           <Button
             variant="ghost"
             onClick={() => router.push(`/studio/${id}`)}
@@ -91,8 +162,8 @@ export default function GeneratorPage({
           >
             Cancel
           </Button>
-
           <Button
+            onClick={handleSave}
             disabled={!generatedImage}
             className="bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 border border-zinc-700 font-bold text-xs disabled:opacity-50"
           >
@@ -101,95 +172,238 @@ export default function GeneratorPage({
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
         {/* Left: Controls */}
-        <div className="w-[400px] border-r border-zinc-800 p-6 flex flex-col gap-6 bg-zinc-900/20 overflow-y-auto">
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-              Name
-            </label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={`e.g. ${
-                type === "cast" ? "Detective Miller" : "Cyberpunk Bar"
-              }`}
-              className="bg-zinc-900 border-zinc-800 text-zinc-200 focus-visible:ring-[#D2FF44]"
-            />
+        <div className="w-[420px] border-r border-zinc-800 flex flex-col bg-zinc-900/10">
+          <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            {/* 1. BASIC INFO */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  Asset Name
+                </Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Detective Miller"
+                  className="bg-zinc-950 border-zinc-800 text-zinc-200 focus-visible:ring-[#D2FF44]"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                  Visual Prompt
+                </Label>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  className="h-28 bg-zinc-950 border-zinc-800 text-zinc-200 focus-visible:ring-[#D2FF44] resize-none leading-relaxed"
+                  placeholder="Describe lighting, subject, and mood..."
+                />
+              </div>
+            </div>
+
+            {/* 2. GEAR SECTION - FIXED LAYOUT */}
+            <div className="relative pt-2">
+              <div className="absolute -top-1 left-0 bg-[#D2FF44] text-black text-[10px] font-bold px-2 py-0.5 rounded-full z-10 flex items-center gap-1">
+                <Camera size={10} /> CINEMATOGRAPHY
+              </div>
+
+              <div className="border border-zinc-800 bg-zinc-900/30 rounded-xl p-5 pt-8 space-y-5 mt-2">
+                {/* FIXED: Stacked Vertically so they don't overlap */}
+                <div className="flex flex-col gap-4">
+                  <div className="space-y-1.5 w-full">
+                    <Label className="text-[10px] text-zinc-400 uppercase font-bold flex items-center gap-1.5">
+                      <Film size={12} /> Camera Body
+                    </Label>
+                    <Select
+                      value={selectedCamera}
+                      onValueChange={setSelectedCamera}
+                    >
+                      <SelectTrigger className="h-9 w-full bg-zinc-950 border-zinc-800 text-xs font-medium">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-zinc-500 uppercase">
+                            Digital Cinema
+                          </SelectLabel>
+                          <SelectItem value="Arri Alexa 65">
+                            Arri Alexa 65 (Large Format)
+                          </SelectItem>
+                          <SelectItem value="Arri Alexa 35">
+                            Arri Alexa 35 (Super 35)
+                          </SelectItem>
+                          <SelectItem value="RED V-Raptor XL">
+                            RED V-Raptor XL
+                          </SelectItem>
+                          <SelectItem value="Sony Venice 2">
+                            Sony Venice 2
+                          </SelectItem>
+                          <SelectItem value="Panavision DXL2">
+                            Panavision DXL2
+                          </SelectItem>
+                        </SelectGroup>
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                            Film Stock Emulation
+                          </SelectLabel>
+                          <SelectItem value="IMAX 70mm Film">
+                            IMAX 15/70mm Film
+                          </SelectItem>
+                          <SelectItem value="Kodak Vision3 500T">
+                            Kodak Vision3 500T
+                          </SelectItem>
+                          <SelectItem value="Kodak Portra 400">
+                            Kodak Portra 400
+                          </SelectItem>
+                          <SelectItem value="16mm Bolex">
+                            16mm Grainy Film
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5 w-full">
+                    <Label className="text-[10px] text-zinc-400 uppercase font-bold flex items-center gap-1.5">
+                      <Aperture size={12} /> Lens Set
+                    </Label>
+                    <Select
+                      value={selectedLens}
+                      onValueChange={setSelectedLens}
+                    >
+                      <SelectTrigger className="h-9 w-full bg-zinc-950 border-zinc-800 text-xs font-medium">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-zinc-500 uppercase">
+                            Anamorphic
+                          </SelectLabel>
+                          <SelectItem value="Panavision C-Series">
+                            Panavision C-Series
+                          </SelectItem>
+                          <SelectItem value="Cooke Anamorphic /i">
+                            Cooke Anamorphic /i
+                          </SelectItem>
+                          <SelectItem value="Atlas Orion">
+                            Atlas Orion
+                          </SelectItem>
+                        </SelectGroup>
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                            Spherical Primes
+                          </SelectLabel>
+                          <SelectItem value="Cooke S4/i Prime">
+                            Cooke S4/i Prime
+                          </SelectItem>
+                          <SelectItem value="Arri/Zeiss Master Prime">
+                            Arri/Zeiss Master Prime
+                          </SelectItem>
+                          <SelectItem value="Angenieux Optimo">
+                            Angenieux Optimo Zoom
+                          </SelectItem>
+                          <SelectItem value="Canon K35 Vintage">
+                            Canon K35 Vintage
+                          </SelectItem>
+                          <SelectItem value="Leica Summilux-C">
+                            Leica Summilux-C
+                          </SelectItem>
+                        </SelectGroup>
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                            Vintage & Specialty
+                          </SelectLabel>
+                          <SelectItem value="Petzval 85 Art">
+                            Lomo Petzval 85 (Swirly Bokeh)
+                          </SelectItem>
+                          <SelectItem value="Canon K35 Vintage">
+                            Canon K35 Vintage
+                          </SelectItem>
+                          <SelectItem value="16mm Bolex">
+                            16mm Vintage Look
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Focal Length Slider */}
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label className="text-[10px] text-zinc-400 uppercase font-bold">
+                      Focal Length
+                    </Label>
+                    <span className="text-[10px] text-[#D2FF44] font-mono">
+                      {selectedFocal}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {["14mm", "24mm", "35mm", "50mm", "85mm"].map((focal) => (
+                      <button
+                        key={focal}
+                        onClick={() => setSelectedFocal(focal)}
+                        className={`text-[10px] h-8 rounded border transition-all font-bold ${
+                          selectedFocal === focal
+                            ? "bg-[#D2FF44] text-black border-[#D2FF44]"
+                            : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-600"
+                        }`}
+                      >
+                        {focal}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                Prompt
-              </label>
-              <span className="text-[10px] text-zinc-600">
-                {prompt.length}/1000
-              </span>
-            </div>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              className="h-40 bg-zinc-900 border-zinc-800 text-zinc-200 focus-visible:ring-[#D2FF44] resize-none"
-              placeholder="Describe the visual details..."
-            />
+          <div className="p-6 border-t border-zinc-800 bg-zinc-900/30">
             <Button
-              variant="outline"
-              size="sm"
-              className="w-full bg-zinc-900/50 border-dashed border-zinc-700 text-zinc-400 hover:text-[#D2FF44] hover:border-[#D2FF44]"
+              onClick={handleGenerate}
+              disabled={isGenerating || !prompt}
+              size="lg"
+              className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold shadow-[0_0_20px_rgba(210,255,68,0.2)] disabled:opacity-50 transition-all"
             >
-              <Sparkles size={14} className="mr-2" /> Enhance Prompt with AI
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 animate-spin" /> DEVELOPING
+                  NEGATIVE...
+                </>
+              ) : (
+                <>
+                  <Dice5 size={18} className="mr-2" /> GENERATE SHOT
+                </>
+              )}
             </Button>
           </div>
-
-          <Button
-            onClick={handleGenerate}
-            disabled={isGenerating || !prompt}
-            size="lg"
-            className="mt-auto w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold shadow-[0_0_15px_rgba(210,255,68,0.15)] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="mr-2 animate-spin" /> GENERATING...
-              </>
-            ) : (
-              <>
-                <Dice5 size={18} className="mr-2" /> GENERATE PREVIEW
-              </>
-            )}
-          </Button>
         </div>
 
         {/* Right: Preview Area */}
-        <div className="flex-1 bg-black flex items-center justify-center relative bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/50 to-black">
-          {/* Case 1: Loading */}
+        <div className="flex-1 bg-black flex items-center justify-center relative bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/50 to-black overflow-hidden">
           {isGenerating && (
             <div className="flex flex-col items-center gap-4 animate-pulse">
               <div className="w-16 h-16 border-4 border-[#D2FF44] border-t-transparent rounded-full animate-spin" />
               <p className="text-[#D2FF44] font-mono text-sm tracking-widest uppercase">
-                Rendering...
+                Rendering with Flux...
               </p>
             </div>
           )}
-
-          {/* Case 2: Result */}
           {!isGenerating && generatedImage && (
             <img
               src={generatedImage}
               alt="Generated"
-              className="max-h-[80vh] max-w-[90%] object-contain shadow-2xl border border-zinc-800 rounded-lg"
+              className="max-h-[90%] max-w-[90%] object-contain shadow-2xl border border-zinc-800 rounded-sm"
             />
           )}
-
-          {/* Case 3: Empty State */}
           {!isGenerating && !generatedImage && (
             <div className="text-center space-y-4 opacity-40 select-none">
               <div className="w-24 h-24 border-2 border-dashed border-zinc-800 rounded-2xl flex items-center justify-center mx-auto text-zinc-700">
                 <Wand2 size={32} />
               </div>
               <p className="text-sm font-medium text-zinc-500">
-                Configure settings to generate preview
+                Configure camera & settings to begin
               </p>
             </div>
           )}

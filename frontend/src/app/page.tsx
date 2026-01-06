@@ -67,7 +67,13 @@ export default function LobbyPage() {
     try {
       const res = await fetch("http://127.0.0.1:8000/projects");
       const data = await res.json();
-      setProjects(data.projects);
+
+      const mappedProjects = data.projects.map((p: any) => ({
+        ...p,
+        aspectRatio: p.aspect_ratio || "16:9",
+      }));
+
+      setProjects(mappedProjects);
     } catch (error) {
       console.error("Failed to load projects", error);
     } finally {
@@ -84,6 +90,7 @@ export default function LobbyPage() {
     setEditingProject(null);
     setProjectName("");
     setProjectDesc("");
+    setSelectedRatio("16:9");
     setIsProjectModalOpen(true);
   };
 
@@ -93,6 +100,7 @@ export default function LobbyPage() {
     setEditingProject(project);
     setProjectName(project.name);
     setProjectDesc(project.description);
+    setSelectedRatio(project.aspectRatio || "16:9");
     setIsProjectModalOpen(true);
   };
 
@@ -120,6 +128,7 @@ export default function LobbyPage() {
         body: JSON.stringify({
           name: projectName,
           description: projectDesc || "Untitled Genre",
+          aspect_ratio: selectedRatio, // <--- CRITICAL: Sending ratio to backend
         }),
       });
 
@@ -368,7 +377,7 @@ export default function LobbyPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 4. DELETE CONFIRMATION MODAL - STYLED WITH ACID GREEN */}
+      {/* 4. DELETE CONFIRMATION MODAL */}
       <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
         <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md shadow-[0_0_30px_rgba(210,255,68,0.2)]">
           <DialogHeader>
