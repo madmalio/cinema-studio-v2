@@ -5,21 +5,26 @@ from pydantic import BaseModel
 import sqlite3
 import os
 
-# Import your RunPod client
-from runpod_client import generate_cinematic_image
+# --- IMPORTS FROM YOUR ENGINES ---
+# 1. The Local Image Engine (Flux on your RTX 3060)
+from runpod_client import generate_cinematic_image 
+
+# 2. The Cloud Video Engine (Wan 2.1 on Fal.ai)
+from video_engine import generate_video_from_image
 
 app = FastAPI()
 
 # 1. SETUP CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "*"], # Allow all for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 2. MOUNT STATIC FOLDER
+# This allows the frontend to see your generated images/videos at http://localhost:8000/generated/filename.png
 if not os.path.exists("generated"):
     os.makedirs("generated")
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
@@ -40,15 +45,20 @@ class Project(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str
     description: str
-    aspect_ratio: str  # <--- FIXED: Now allows updating ratio
+    aspect_ratio: str
 
 class GenerateRequest(BaseModel):
     project_id: int
-    type: str
+    type: str  # "image"
     prompt: str
     camera: str = "Arri Alexa 65"
     lens: str = "Anamorphic"
     focal_length: str = "35mm"
+
+# NEW: Model for Video Requests
+class AnimateRequest(BaseModel):
+    asset_id: int
+    prompt: str
 
 class AssetUpdate(BaseModel):
     name: str
@@ -57,11 +67,12 @@ class AssetUpdate(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"message": "Cinema Studio Backend v2.6"}
+    return {"message": "Cinema Studio Backend v3.0 (Hybrid Local/Cloud)"}
 
 @app.get("/projects")
 def get_projects():
     conn = get_db_connection()
+    # Ensure table exists
     conn.execute('''
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -133,7 +144,6 @@ def delete_project(project_id: int):
 def update_project(project_id: int, project: ProjectUpdate):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # FIXED: SQL now updates aspect_ratio too
     cursor.execute("UPDATE projects SET name = ?, description = ?, aspect_ratio = ? WHERE id = ?",
                    (project.name, project.description, project.aspect_ratio, project_id))
     conn.commit()
@@ -145,6 +155,7 @@ def update_project(project_id: int, project: ProjectUpdate):
 @app.get("/projects/{project_id}/assets")
 def get_project_assets(project_id: int):
     conn = get_db_connection()
+    # Ensure assets table exists just in case
     conn.execute('''
         CREATE TABLE IF NOT EXISTS assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,15 +186,17 @@ def delete_asset(asset_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. FIND THE FILE
+    # 1. FIND THE FILE TO DELETE
     asset = cursor.execute("SELECT image_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
     
     if asset:
+        # Convert URL to file path
+        # Example: http://localhost:8000/generated/abc.png -> generated/abc.png
         image_url = asset['image_path']
-        filename = os.path.basename(image_url)
+        filename = image_url.split("/")[-1] # Gets "abc.png"
         file_path = os.path.join("generated", filename)
         
-        # 2. DELETE THE FILE
+        # 2. DELETE THE FILE FROM DISK
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -197,11 +210,12 @@ def delete_asset(asset_id: int):
     conn.close()
     return {"message": "Asset deleted"}
 
-# --- GENERATOR ENGINE ---
+# --- GENERATOR ENGINES ---
 
+# 1. LOCAL IMAGE GENERATION (RTX 3060)
 @app.post("/generate")
 def generate_asset(request: GenerateRequest):
-    print(f"🎨 Received Request: {request.prompt} [Cam: {request.camera}]")
+    print(f"🎨 Received Image Request: {request.prompt}")
     
     try:
         conn = get_db_connection()
@@ -210,6 +224,7 @@ def generate_asset(request: GenerateRequest):
         
         ratio = project['aspect_ratio'] if project and 'aspect_ratio' in project.keys() else "16:9"
 
+        # Call the Local Engine (runpod_client.py)
         image_path = generate_cinematic_image(
             prompt=request.prompt, 
             aspect_ratio=ratio,
@@ -236,8 +251,58 @@ def generate_asset(request: GenerateRequest):
         return {"success": True, "image_url": full_image_url, "asset_id": new_id}
 
     except Exception as e:
-        print(f"❌ Generation Error: {e}")
+        print(f"❌ Image Generation Error: {e}")
         return {"success": False, "error": str(e)}
+
+# 2. CLOUD VIDEO GENERATION (Wan 2.1 via Fal.ai)
+@app.post("/animate")
+def animate_asset(request: AnimateRequest):
+    print(f"🎥 Animation Request for Asset ID: {request.asset_id}")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. FIND THE LOCAL IMAGE
+    asset = cursor.execute("SELECT * FROM assets WHERE id = ?", (request.asset_id,)).fetchone()
+    
+    if not asset:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Asset not found")
+        
+    # Convert web URL back to local system path for uploading
+    full_url = asset['image_path']
+    filename = full_url.split("/")[-1]
+    local_path = os.path.join("generated", filename)
+
+    if not os.path.exists(local_path):
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"File not found on disk: {local_path}")
+
+    # 2. GENERATE VIDEO
+    try:
+        # Call the Cloud Engine (video_engine.py)
+        video_web_path = generate_video_from_image(local_path, request.prompt)
+        full_video_url = f"http://127.0.0.1:8000{video_web_path}"
+
+        # 3. SAVE TO DB
+        # Save as a new "video" asset
+        cursor.execute(
+            '''
+            INSERT INTO assets (project_id, type, name, prompt, image_path)
+            VALUES (?, ?, ?, ?, ?)
+            ''',
+            (asset['project_id'], "video", f"Video of {asset['name']}", request.prompt, full_video_url)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        
+        return {"success": True, "video_url": full_video_url, "asset_id": new_id}
+
+    except Exception as e:
+        print(f"❌ Video Error: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     import uvicorn

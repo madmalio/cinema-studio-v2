@@ -333,7 +333,7 @@ export default function StudioPage({
           {activeShot ? (
             <img
               src={activeShot}
-              className="max-h-full shadow-2xl rounded-lg border border-zinc-800 ring-1 ring-white/10"
+              className="max-h-full shadow-2xl"
               alt="Active Shot"
             />
           ) : (
