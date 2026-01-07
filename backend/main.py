@@ -9,22 +9,22 @@ import os
 # 1. The Local Image Engine (Flux on your RTX 3060)
 from runpod_client import generate_cinematic_image 
 
-# 2. The Cloud Video Engine (Wan 2.1 on Fal.ai)
-from video_engine import generate_video_from_image
+# 2. The Local Video Engine (SVD on your RTX 3060)
+# WE SWAPPED THIS: using local_video instead of video_engine to save money
+from local_video import generate_local_video
 
 app = FastAPI()
 
 # 1. SETUP CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "*"], # Allow all for development
+    allow_origins=["http://localhost:3000", "*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 2. MOUNT STATIC FOLDER
-# This allows the frontend to see your generated images/videos at http://localhost:8000/generated/filename.png
 if not os.path.exists("generated"):
     os.makedirs("generated")
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
@@ -49,13 +49,12 @@ class ProjectUpdate(BaseModel):
 
 class GenerateRequest(BaseModel):
     project_id: int
-    type: str  # "image"
+    type: str  # "cast", "loc", "prop", or "shot"
     prompt: str
-    camera: str = "Arri Alexa 65"
+    camera: str = "Arri Alexa 35"
     lens: str = "Anamorphic"
     focal_length: str = "35mm"
 
-# NEW: Model for Video Requests
 class AnimateRequest(BaseModel):
     asset_id: int
     prompt: str
@@ -63,11 +62,26 @@ class AnimateRequest(BaseModel):
 class AssetUpdate(BaseModel):
     name: str
 
+# NEW: Scene & Shot Models
+class Scene(BaseModel):
+    name: str
+
+class ShotRequest(BaseModel):
+    scene_id: int
+    prompt: str
+    cast_id: int | None = None
+    loc_id: int | None = None
+
+class ShotUpdate(BaseModel):
+    keyframe_url: str | None = None
+    video_url: str | None = None
+    status: str | None = None
+
 # --- PROJECT ROUTES ---
 
 @app.get("/")
 def read_root():
-    return {"message": "Cinema Studio Backend v3.0 (Hybrid Local/Cloud)"}
+    return {"message": "Cinema Studio Backend v4.0 (Scene Builder Edition)"}
 
 @app.get("/projects")
 def get_projects():
@@ -155,7 +169,6 @@ def update_project(project_id: int, project: ProjectUpdate):
 @app.get("/projects/{project_id}/assets")
 def get_project_assets(project_id: int):
     conn = get_db_connection()
-    # Ensure assets table exists just in case
     conn.execute('''
         CREATE TABLE IF NOT EXISTS assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,13 +203,11 @@ def delete_asset(asset_id: int):
     asset = cursor.execute("SELECT image_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
     
     if asset:
-        # Convert URL to file path
-        # Example: http://localhost:8000/generated/abc.png -> generated/abc.png
         image_url = asset['image_path']
-        filename = image_url.split("/")[-1] # Gets "abc.png"
+        filename = image_url.split("/")[-1]
         file_path = os.path.join("generated", filename)
         
-        # 2. DELETE THE FILE FROM DISK
+        # 2. DELETE FROM DISK
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -210,9 +221,78 @@ def delete_asset(asset_id: int):
     conn.close()
     return {"message": "Asset deleted"}
 
+# --- SCENE & SHOT ROUTES (THE STORYBOARD) ---
+
+@app.get("/projects/{project_id}/scenes")
+def get_scenes(project_id: int):
+    conn = get_db_connection()
+    # Ensure tables exist
+    conn.execute('''CREATE TABLE IF NOT EXISTS scenes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, name TEXT, order_index INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS shots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, scene_id INTEGER, prompt TEXT, reference_asset_id INTEGER, keyframe_url TEXT, video_url TEXT, status TEXT DEFAULT 'pending', order_index INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+    )''')
+    
+    scenes = conn.execute('SELECT * FROM scenes WHERE project_id = ? ORDER BY order_index ASC', (project_id,)).fetchall()
+    
+    results = []
+    for scene in scenes:
+        shots = conn.execute('SELECT * FROM shots WHERE scene_id = ? ORDER BY order_index ASC', (scene['id'],)).fetchall()
+        results.append({**dict(scene), "shots": shots})
+        
+    conn.close()
+    return {"scenes": results}
+
+@app.post("/projects/{project_id}/scenes")
+def create_scene(project_id: int, scene: Scene):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO scenes (project_id, name) VALUES (?, ?)', (project_id, scene.name))
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return {"id": new_id, "name": scene.name, "shots": []}
+
+@app.delete("/scenes/{scene_id}")
+def delete_scene(scene_id: int):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM scenes WHERE id = ?", (scene_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Scene deleted"}
+
+@app.post("/shots")
+def create_shot(shot: ShotRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Create an empty slot in the timeline
+    cursor.execute('''
+        INSERT INTO shots (scene_id, prompt, reference_asset_id, status)
+        VALUES (?, ?, ?, 'pending')
+    ''', (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id))
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return {"id": new_id, "status": "pending"}
+
+@app.put("/shots/{shot_id}")
+def update_shot(shot_id: int, update: ShotUpdate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if update.keyframe_url:
+        cursor.execute("UPDATE shots SET keyframe_url = ?, status = 'ready_for_video' WHERE id = ?", (update.keyframe_url, shot_id))
+    if update.video_url:
+        cursor.execute("UPDATE shots SET video_url = ?, status = 'complete' WHERE id = ?", (update.video_url, shot_id))
+        
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
 # --- GENERATOR ENGINES ---
 
-# 1. LOCAL IMAGE GENERATION (RTX 3060)
+# 1. LOCAL IMAGE GENERATION (FLUX)
 @app.post("/generate")
 def generate_asset(request: GenerateRequest):
     print(f"🎨 Received Image Request: {request.prompt}")
@@ -224,7 +304,7 @@ def generate_asset(request: GenerateRequest):
         
         ratio = project['aspect_ratio'] if project and 'aspect_ratio' in project.keys() else "16:9"
 
-        # Call the Local Engine (runpod_client.py)
+        # Call Local Flux Engine
         image_path = generate_cinematic_image(
             prompt=request.prompt, 
             aspect_ratio=ratio,
@@ -235,6 +315,7 @@ def generate_asset(request: GenerateRequest):
         
         full_image_url = f"http://127.0.0.1:8000{image_path}"
         
+        # We record it in Assets table even if it's for a shot (good for history)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -254,7 +335,8 @@ def generate_asset(request: GenerateRequest):
         print(f"❌ Image Generation Error: {e}")
         return {"success": False, "error": str(e)}
 
-# 2. CLOUD VIDEO GENERATION (Wan 2.1 via Fal.ai)
+# 2. ASSET ANIMATION (LOCAL SVD)
+# Used by the "Animate" button in Asset Library
 @app.post("/animate")
 def animate_asset(request: AnimateRequest):
     print(f"🎥 Animation Request for Asset ID: {request.asset_id}")
@@ -262,36 +344,39 @@ def animate_asset(request: AnimateRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. FIND THE LOCAL IMAGE
-    asset = cursor.execute("SELECT * FROM assets WHERE id = ?", (request.asset_id,)).fetchone()
-    
-    if not asset:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Asset not found")
-        
-    # Convert web URL back to local system path for uploading
-    full_url = asset['image_path']
-    filename = full_url.split("/")[-1]
-    local_path = os.path.join("generated", filename)
+    # Check if we got a real ID or a dummy ID (like from SceneBoard hacks)
+    if request.asset_id == 99999 and request.prompt.startswith("generated/"):
+        # Handle direct path (SceneBoard quick fix)
+        local_path = request.prompt
+        # Fake asset obj for DB insert later
+        asset = {'project_id': 1, 'name': 'Scene Shot'} 
+    else:
+        # Standard lookup
+        asset = cursor.execute("SELECT * FROM assets WHERE id = ?", (request.asset_id,)).fetchone()
+        if not asset:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Asset not found")
+            
+        full_url = asset['image_path']
+        filename = full_url.split("/")[-1]
+        local_path = os.path.join("generated", filename)
 
     if not os.path.exists(local_path):
         conn.close()
         raise HTTPException(status_code=404, detail=f"File not found on disk: {local_path}")
 
-    # 2. GENERATE VIDEO
+    # GENERATE VIDEO LOCALLY
     try:
-        # Call the Cloud Engine (video_engine.py)
-        video_web_path = generate_video_from_image(local_path, request.prompt)
+        video_web_path = generate_local_video(local_path)
         full_video_url = f"http://127.0.0.1:8000{video_web_path}"
 
-        # 3. SAVE TO DB
         # Save as a new "video" asset
         cursor.execute(
             '''
             INSERT INTO assets (project_id, type, name, prompt, image_path)
             VALUES (?, ?, ?, ?, ?)
             ''',
-            (asset['project_id'], "video", f"Video of {asset['name']}", request.prompt, full_video_url)
+            (asset['project_id'], "video", f"Video of {asset['name']}", "SVD Animation", full_video_url)
         )
         conn.commit()
         new_id = cursor.lastrowid
@@ -300,6 +385,45 @@ def animate_asset(request: AnimateRequest):
 
     except Exception as e:
         print(f"❌ Video Error: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+# 3. SHOT ANIMATION (LOCAL SVD)
+# Used by the Scene Board "Animate" button
+@app.post("/shots/{shot_id}/animate")
+def animate_shot_endpoint(shot_id: int):
+    print(f"🎬 Animating Shot ID: {shot_id}")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. Get the Shot
+    shot = cursor.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
+    if not shot or not shot['keyframe_url']:
+        conn.close()
+        return {"success": False, "error": "No keyframe found to animate"}
+
+    # 2. Get Local Path
+    filename = shot['keyframe_url'].split("/")[-1]
+    local_path = os.path.join("generated", filename)
+    
+    if not os.path.exists(local_path):
+        conn.close()
+        return {"success": False, "error": "Source image missing from disk"}
+    
+    # 3. Run Local Engine
+    try:
+        video_web_path = generate_local_video(local_path)
+        full_video_url = f"http://127.0.0.1:8000{video_web_path}"
+        
+        # 4. Update Shot Record
+        cursor.execute("UPDATE shots SET video_url = ?, status = 'complete' WHERE id = ?", (full_video_url, shot_id))
+        conn.commit()
+        
+        return {"success": True, "video_url": full_video_url}
+        
+    except Exception as e:
+        print(f"Animation Error: {e}")
         return {"success": False, "error": str(e)}
     finally:
         conn.close()

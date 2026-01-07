@@ -1,0 +1,84 @@
+{
+  "2": {
+    "inputs": {
+      "image": "2b1ff278-e1b4-401b-8e37-df9bfc921b8d.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "width": 1024,
+      "height": 576,
+      "video_frames": 25,
+      "motion_bucket_id": 127,
+      "fps": 6,
+      "augmentation_level": 0,
+      "clip_vision": ["7", 1],
+      "init_image": ["2", 0],
+      "vae": ["7", 2]
+    },
+    "class_type": "SVD_img2vid_Conditioning",
+    "_meta": {
+      "title": "SVD_img2vid_Conditioning"
+    }
+  },
+  "4": {
+    "inputs": {
+      "seed": 270910148356761,
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": ["7", 0],
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "latent_image": ["3", 2]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "5": {
+    "inputs": {
+      "samples": ["4", 0],
+      "vae": ["7", 2]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "6": {
+    "inputs": {
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "SVD_Test",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": ["5", 0]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "7": {
+    "inputs": {
+      "ckpt_name": "svd_xt.safetensors"
+    },
+    "class_type": "ImageOnlyCheckpointLoader",
+    "_meta": {
+      "title": "Image Only Checkpoint Loader (img2vid model)"
+    }
+  }
+}

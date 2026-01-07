@@ -15,6 +15,9 @@ import {
   AlertTriangle,
   MoreVertical,
   Pencil,
+  Film,
+  Loader2,
+  Clapperboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +65,11 @@ export default function StudioPage({
   // Modal States
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isAnimateModalOpen, setIsAnimateModalOpen] = useState(false);
+
+  // Animation State
+  const [animationPrompt, setAnimationPrompt] = useState("");
+  const [isAnimating, setIsAnimating] = useState(false);
 
   // Selection State
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
@@ -105,10 +114,19 @@ export default function StudioPage({
     setIsDeleteModalOpen(true);
   };
 
-  // 3. Confirm Edit (Rename)
+  // 3. Prepare Animate
+  const openAnimateModal = (e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation();
+    setSelectedAsset(asset);
+    setAnimationPrompt(
+      `Cinematic motion, slow zoom in on ${asset.name}, atmospheric lighting`
+    );
+    setIsAnimateModalOpen(true);
+  };
+
+  // 4. Confirm Edit (Rename)
   const handleRenameAsset = async () => {
     if (!selectedAsset || !newName) return;
-
     try {
       const res = await fetch(
         `http://127.0.0.1:8000/assets/${selectedAsset.id}`,
@@ -118,9 +136,7 @@ export default function StudioPage({
           body: JSON.stringify({ name: newName }),
         }
       );
-
       if (res.ok) {
-        // Update local state without refreshing
         setAssets(
           assets.map((a) =>
             a.id === selectedAsset.id ? { ...a, name: newName } : a
@@ -133,16 +149,13 @@ export default function StudioPage({
     }
   };
 
-  // 4. Confirm Delete
+  // 5. Confirm Delete
   const handleConfirmDelete = async () => {
     if (!selectedAsset) return;
-
     try {
       await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
         method: "DELETE",
       });
-
-      // Update local state
       setAssets(assets.filter((a) => a.id !== selectedAsset.id));
       if (activeShot === selectedAsset.image_path) setActiveShot(null);
 
@@ -153,58 +166,120 @@ export default function StudioPage({
     }
   };
 
+  // 6. EXECUTE ANIMATION (The "Action" Button)
+  const handleAnimateAsset = async () => {
+    if (!selectedAsset || !animationPrompt) return;
+
+    setIsAnimating(true);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/animate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          asset_id: selectedAsset.id,
+          prompt: animationPrompt,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Refresh to see the new video
+        await fetchData();
+        setIsAnimateModalOpen(false);
+      } else {
+        alert("Animation failed: " + data.error);
+      }
+    } catch (error) {
+      console.error("Network error:", error);
+      alert("Failed to connect to backend");
+    } finally {
+      setIsAnimating(false);
+    }
+  };
+
   // Asset Card Component
-  const AssetCard = ({ asset }: { asset: Asset }) => (
-    <div
-      onClick={() => setActiveShot(asset.image_path)}
-      className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-pointer group relative transition-all"
-    >
-      <img
-        src={asset.image_path}
-        alt={asset.name}
-        className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-      />
+  const AssetCard = ({ asset }: { asset: Asset }) => {
+    const isVideo = asset.type === "video";
 
-      {/* Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold text-white truncate max-w-[70%]">
-            {asset.name}
-          </p>
+    return (
+      <div
+        onClick={() => setActiveShot(asset.image_path)}
+        className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-pointer group relative transition-all bg-zinc-900"
+      >
+        {isVideo ? (
+          <div className="relative w-full h-full">
+            <video
+              src={asset.image_path}
+              className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+              muted
+              loop
+              onMouseOver={(e) => e.currentTarget.play()}
+              onMouseOut={(e) => e.currentTarget.pause()}
+            />
+            <div className="absolute top-2 right-2 bg-black/60 rounded-full p-1">
+              <Film size={10} className="text-[#D2FF44]" />
+            </div>
+          </div>
+        ) : (
+          <img
+            src={asset.image_path}
+            alt={asset.name}
+            className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+          />
+        )}
 
-          {/* KEBAB MENU */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                onClick={(e) => e.stopPropagation()}
-                className="p-1 hover:bg-zinc-800 rounded-md text-zinc-300 hover:text-white transition-colors"
-              >
-                <MoreVertical size={14} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white min-w-[120px]">
-              <DropdownMenuItem
-                onClick={(e) => openEditModal(e, asset)}
-                className="text-xs cursor-pointer hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white"
-              >
-                <Pencil size={12} className="mr-2" /> Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={(e) => openDeleteModal(e, asset)}
-                className="text-xs cursor-pointer text-red-500 hover:bg-red-900/20 focus:bg-red-900/20 focus:text-red-500"
-              >
-                <Trash2 size={12} className="mr-2" /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {/* Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold text-white truncate max-w-[70%]">
+              {asset.name}
+            </p>
+
+            {/* KEBAB MENU */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-1 hover:bg-zinc-800 rounded-md text-zinc-300 hover:text-white transition-colors"
+                >
+                  <MoreVertical size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white min-w-[120px]">
+                {!isVideo && (
+                  <DropdownMenuItem
+                    onClick={(e) => openAnimateModal(e, asset)}
+                    className="text-xs cursor-pointer hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white text-[#D2FF44]"
+                  >
+                    <Clapperboard size={12} className="mr-2" /> Animate
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  onClick={(e) => openEditModal(e, asset)}
+                  className="text-xs cursor-pointer hover:bg-zinc-800 focus:bg-zinc-800 focus:text-white"
+                >
+                  <Pencil size={12} className="mr-2" /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={(e) => openDeleteModal(e, asset)}
+                  className="text-xs cursor-pointer text-red-500 hover:bg-red-900/20 focus:bg-red-900/20 focus:text-red-500"
+                >
+                  <Trash2 size={12} className="mr-2" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const castAssets = assets.filter((a) => a.type === "cast");
   const locAssets = assets.filter((a) => a.type === "loc");
   const propAssets = assets.filter((a) => a.type === "prop");
+  const clipAssets = assets.filter((a) => a.type === "video");
 
   return (
     <div className="flex h-screen bg-zinc-950 text-white overflow-hidden font-sans selection:bg-[#D2FF44]/30">
@@ -235,24 +310,30 @@ export default function StudioPage({
 
         <Tabs defaultValue="cast" className="flex-1 flex flex-col">
           <div className="px-4 pt-4">
-            <TabsList className="w-full bg-zinc-950 border border-zinc-800 p-1">
+            <TabsList className="w-full bg-zinc-950 border border-zinc-800 p-1 grid grid-cols-4">
               <TabsTrigger
                 value="cast"
-                className="flex-1 text-xs font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+                className="text-[10px] font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
               >
                 Cast
               </TabsTrigger>
               <TabsTrigger
                 value="loc"
-                className="flex-1 text-xs font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+                className="text-[10px] font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
               >
                 Locs
               </TabsTrigger>
               <TabsTrigger
                 value="props"
-                className="flex-1 text-xs font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+                className="text-[10px] font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
               >
                 Props
+              </TabsTrigger>
+              <TabsTrigger
+                value="clips"
+                className="text-[10px] font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+              >
+                Clips
               </TabsTrigger>
             </TabsList>
           </div>
@@ -297,6 +378,18 @@ export default function StudioPage({
                 ))}
               </div>
             </TabsContent>
+
+            {/* NEW: CLIPS TAB */}
+            <TabsContent value="clips" className="mt-0 space-y-4">
+              <div className="text-center p-2 text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-md">
+                Generated videos appear here
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {clipAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
+              </div>
+            </TabsContent>
           </ScrollArea>
         </Tabs>
       </div>
@@ -304,7 +397,6 @@ export default function StudioPage({
       {/* CENTER STAGE */}
       <div className="flex-1 flex flex-col relative bg-zinc-950">
         <div className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/30 backdrop-blur-sm">
-          {/* ... Header Content ... */}
           <div className="flex items-center gap-2 text-zinc-400">
             <Wand2 size={16} className="text-[#D2FF44]" />
             <span className="text-xs font-bold text-zinc-200">
@@ -315,7 +407,7 @@ export default function StudioPage({
               className="h-4 mx-2 bg-zinc-800"
             />
             <span className="text-[10px] font-mono text-zinc-500 uppercase">
-              Flux Dev + Qwen 2.5
+              Flux Dev + Wan 2.1
             </span>
           </div>
           <div className="flex gap-2">
@@ -331,11 +423,21 @@ export default function StudioPage({
 
         <div className="flex-1 flex items-center justify-center p-10 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-zinc-950">
           {activeShot ? (
-            <img
-              src={activeShot}
-              className="max-h-full shadow-2xl"
-              alt="Active Shot"
-            />
+            activeShot.endsWith(".mp4") ? (
+              <video
+                src={activeShot}
+                controls
+                autoPlay
+                loop
+                className="max-h-full max-w-full shadow-2xl rounded-sm border border-zinc-800"
+              />
+            ) : (
+              <img
+                src={activeShot}
+                className="max-h-full max-w-full shadow-2xl rounded-sm border border-zinc-800"
+                alt="Active Shot"
+              />
+            )
           ) : (
             <div className="text-center space-y-4 opacity-30 select-none">
               <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-zinc-700 flex items-center justify-center mx-auto text-zinc-600">
@@ -442,6 +544,58 @@ export default function StudioPage({
               className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold"
             >
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: ANIMATION PROMPT */}
+      <Dialog open={isAnimateModalOpen} onOpenChange={setIsAnimateModalOpen}>
+        <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-md shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <Clapperboard size={18} className="text-[#D2FF44]" /> Animate Shot
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-xs">
+              Sending to Wan 2.1 (Cloud Render). Estimated cost: $0.04
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs uppercase font-bold text-zinc-500">
+                Motion Prompt
+              </Label>
+              <Textarea
+                value={animationPrompt}
+                onChange={(e) => setAnimationPrompt(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 focus-visible:ring-[#D2FF44] min-h-[100px]"
+                placeholder="Describe the movement (e.g. Slow zoom in, pan right, smoke swirling)..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setIsAnimateModalOpen(false)}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-800"
+              disabled={isAnimating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAnimateAsset}
+              disabled={isAnimating}
+              className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold w-32"
+            >
+              {isAnimating ? (
+                <Loader2 className="animate-spin" size={18} />
+              ) : (
+                <>
+                  <Play size={16} className="mr-2 fill-current" /> Action
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
