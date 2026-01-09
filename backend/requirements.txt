@@ -6,3 +6,4 @@ requests
 websocket-client
 fal-client
 google-genai
+opencv-python-headless

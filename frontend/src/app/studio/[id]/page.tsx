@@ -5,26 +5,25 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronLeft,
-  Users,
-  Wand2,
-  Download,
   Plus,
-  Trash2,
-  AlertTriangle,
+  MapPin,
+  User,
+  Layout,
+  FileText,
+  Film,
   MoreVertical,
   Pencil,
-  Film,
-  Loader2,
-  Link as LinkIcon,
-  Video,
-  Image as ImageIcon,
+  Trash2,
+  Calendar,
+  Clock,
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -39,13 +38,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 // --- TYPES ---
 interface Asset {
@@ -53,24 +45,22 @@ interface Asset {
   type: string;
   name: string;
   image_path: string;
+  prompt?: string;
 }
 
 interface Shot {
   id: number;
-  order_index: number;
-  prompt: string;
-  keyframe_url: string | null;
-  video_url: string | null;
-  status: string;
+  status: "pending" | "ready" | "animating" | "complete";
 }
 
 interface Scene {
   id: number;
   name: string;
+  description: string;
   shots: Shot[];
 }
 
-export default function StudioPage({
+export default function ProjectDashboard({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -78,40 +68,29 @@ export default function StudioPage({
   const router = useRouter();
   const { id: projectId } = use(params);
 
-  // --- GLOBAL STATE ---
+  // --- STATE ---
   const [project, setProject] = useState<any>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
-  const [activeSceneId, setActiveSceneId] = useState<string>("default");
-
   const [loading, setLoading] = useState(true);
 
-  // --- UI STATE ---
-  const [activeShotId, setActiveShotId] = useState<number | null>(null);
-  const [draggedAsset, setDraggedAsset] = useState<Asset | null>(null);
+  // Scene Creation
+  const [isSceneModalOpen, setIsSceneModalOpen] = useState(false);
+  const [newSceneName, setNewSceneName] = useState("");
+  const [newSceneDesc, setNewSceneDesc] = useState("");
 
-  // --- MODAL STATES ---
+  // Asset Management
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-
-  // Bridge / Animation State
-  const [isBridgeOpen, setIsBridgeOpen] = useState(false);
-  const [selectedGapIndex, setSelectedGapIndex] = useState<number | null>(null);
-  const [bridgePrompt, setBridgePrompt] = useState("");
-  const [bridgeMode, setBridgeMode] = useState<"draft" | "final">("draft");
-
-  // Selection State (for Edit/Delete)
-  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [newName, setNewName] = useState("");
 
-  // --- 1. FETCH DATA ---
+  // --- FETCH DATA ---
   async function fetchData() {
     try {
-      // Fetch Project
       const pRes = await fetch(`http://127.0.0.1:8000/projects/${projectId}`);
       if (pRes.ok) setProject(await pRes.json());
 
-      // Fetch Assets
       const aRes = await fetch(
         `http://127.0.0.1:8000/projects/${projectId}/assets`
       );
@@ -120,16 +99,12 @@ export default function StudioPage({
         setAssets(data.assets);
       }
 
-      // Fetch Scenes
       const sRes = await fetch(
         `http://127.0.0.1:8000/projects/${projectId}/scenes`
       );
       if (sRes.ok) {
         const data = await sRes.json();
         setScenes(data.scenes);
-        if (data.scenes.length > 0 && activeSceneId === "default") {
-          setActiveSceneId(data.scenes[0].id.toString());
-        }
       }
     } catch (error) {
       console.error("Failed to fetch data", error);
@@ -142,87 +117,48 @@ export default function StudioPage({
     fetchData();
   }, [projectId]);
 
-  // --- 2. ACTIONS ---
-
-  const createDefaultScene = async () => {
+  // --- SCENE ACTIONS ---
+  const handleCreateScene = async () => {
+    if (!newSceneName) return;
     const res = await fetch(
       `http://127.0.0.1:8000/projects/${projectId}/scenes`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Scene 1" }),
+        body: JSON.stringify({
+          name: newSceneName,
+          description: newSceneDesc,
+        }),
       }
     );
-    if (res.ok) fetchData();
+
+    if (res.ok) {
+      setIsSceneModalOpen(false);
+      setNewSceneName("");
+      setNewSceneDesc("");
+      fetchData();
+    }
   };
 
-  const addShotSlot = async () => {
-    if (activeSceneId === "default") {
-      return; // User needs to create scene first
-    }
-    await fetch(`http://127.0.0.1:8000/shots`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scene_id: activeSceneId,
-        prompt: "New Shot",
-      }),
+  // --- ASSET ACTIONS ---
+  const handleDeleteAsset = async () => {
+    if (!selectedAsset) return;
+    await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
+      method: "DELETE",
     });
+    setIsDeleteModalOpen(false);
     fetchData();
   };
 
-  const handleDrop = async (e: React.DragEvent, shotId: number) => {
-    e.preventDefault();
-    if (!draggedAsset) return;
-
-    await fetch(`http://127.0.0.1:8000/shots/${shotId}`, {
+  const handleRenameAsset = async () => {
+    if (!selectedAsset || !newName) return;
+    await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        keyframe_url: draggedAsset.image_path,
-        status: "ready",
-      }),
+      body: JSON.stringify({ name: newName }),
     });
-
-    setDraggedAsset(null);
+    setIsEditModalOpen(false);
     fetchData();
-  };
-
-  const openBridgeMenu = (index: number) => {
-    setSelectedGapIndex(index);
-    setBridgePrompt("Cinematic transition, consistent lighting...");
-    setIsBridgeOpen(true);
-  };
-
-  const handleGenerateBridge = async () => {
-    if (selectedGapIndex === null || activeSceneId === "default") return;
-
-    const currentScene = scenes.find((s) => s.id.toString() === activeSceneId);
-    if (!currentScene) return;
-
-    const startShot = currentScene.shots[selectedGapIndex];
-
-    setIsBridgeOpen(false);
-
-    try {
-      await fetch(`http://127.0.0.1:8000/shots/${startShot.id}/animate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: bridgePrompt }),
-      });
-      fetchData();
-    } catch (e) {
-      console.error(e);
-      alert("Render failed");
-    }
-  };
-
-  // --- ASSET MANAGEMENT ---
-  const openEditModal = (e: React.MouseEvent, asset: Asset) => {
-    e.stopPropagation();
-    setSelectedAsset(asset);
-    setNewName(asset.name);
-    setIsEditModalOpen(true);
   };
 
   const openDeleteModal = (e: React.MouseEvent, asset: Asset) => {
@@ -231,82 +167,21 @@ export default function StudioPage({
     setIsDeleteModalOpen(true);
   };
 
-  const handleRenameAsset = async () => {
-    if (!selectedAsset || !newName) return;
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:8000/assets/${selectedAsset.id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName }),
-        }
-      );
-      if (res.ok) {
-        setAssets(
-          assets.map((a) =>
-            a.id === selectedAsset.id ? { ...a, name: newName } : a
-          )
-        );
-        setIsEditModalOpen(false);
-      }
-    } catch (error) {
-      console.error(error);
-    }
+  const openEditModal = (e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation();
+    setSelectedAsset(asset);
+    setNewName(asset.name);
+    setIsEditModalOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
-    if (!selectedAsset) return;
-    try {
-      await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
-        method: "DELETE",
-      });
-      setAssets(assets.filter((a) => a.id !== selectedAsset.id));
-      setIsDeleteModalOpen(false);
-      setSelectedAsset(null);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Derived State
-  const activeScene = scenes.find((s) => s.id.toString() === activeSceneId);
-  const activeShotPreview = activeShotId
-    ? activeScene?.shots.find((s) => s.id === activeShotId)
-    : null;
-
-  const castAssets = assets.filter((a) => a.type === "cast");
-  const locAssets = assets.filter((a) => a.type === "loc");
-
-  // Reusable Asset Card
+  // --- COMPONENTS ---
   const AssetCard = ({ asset }: { asset: Asset }) => (
-    <div
-      draggable
-      onDragStart={() => setDraggedAsset(asset)}
-      className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] cursor-grab active:cursor-grabbing group relative transition-all bg-zinc-900"
-    >
-      {asset.type === "video" ? (
-        <div className="relative w-full h-full">
-          <video
-            src={asset.image_path}
-            className="w-full h-full object-cover opacity-70 group-hover:opacity-100"
-            muted
-            loop
-            onMouseOver={(e) => e.currentTarget.play()}
-            onMouseOut={(e) => e.currentTarget.pause()}
-          />
-          <div className="absolute top-2 right-2 bg-black/60 rounded-full p-1">
-            <Film size={10} className="text-[#D2FF44]" />
-          </div>
-        </div>
-      ) : (
-        <img
-          src={asset.image_path}
-          alt={asset.name}
-          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-        />
-      )}
-
+    <div className="aspect-square rounded-md overflow-hidden border border-zinc-800 hover:border-[#D2FF44] group relative transition-all bg-zinc-900">
+      <img
+        src={asset.image_path}
+        alt={asset.name}
+        className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+      />
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold text-white truncate max-w-[70%]">
@@ -314,23 +189,20 @@ export default function StudioPage({
           </p>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
-                onClick={(e) => e.stopPropagation()}
-                className="p-1 hover:bg-zinc-800 rounded-md text-zinc-300 hover:text-white"
-              >
+              <button className="p-1 hover:bg-zinc-800 rounded-md text-zinc-300 hover:text-white">
                 <MoreVertical size={14} />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white min-w-[120px]">
+            <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white z-50">
               <DropdownMenuItem
                 onClick={(e) => openEditModal(e, asset)}
-                className="text-xs cursor-pointer hover:bg-zinc-800"
+                className="text-xs hover:bg-zinc-800 cursor-pointer"
               >
                 <Pencil size={12} className="mr-2" /> Rename
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={(e) => openDeleteModal(e, asset)}
-                className="text-xs cursor-pointer text-red-500 hover:bg-red-900/20"
+                className="text-xs text-red-500 hover:bg-red-900/20 cursor-pointer"
               >
                 <Trash2 size={12} className="mr-2" /> Delete
               </DropdownMenuItem>
@@ -341,63 +213,63 @@ export default function StudioPage({
     </div>
   );
 
+  const castAssets = assets.filter((a) => a.type === "cast");
+  const locAssets = assets.filter((a) => a.type === "loc");
+
   return (
     <div className="flex h-screen bg-zinc-950 text-white overflow-hidden font-sans selection:bg-[#D2FF44]/30">
-      {/* 1. LEFT SIDEBAR (ASSETS) */}
-      <div className="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900/50">
-        <div className="p-4 border-b border-zinc-800 flex items-center gap-2">
+      {/* 1. LEFT SIDEBAR: THE BINDER (Global Assets) */}
+      <div className="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900/30">
+        <div className="p-6 border-b border-zinc-800">
           <Button
             variant="ghost"
-            size="icon"
+            size="sm"
             onClick={() => router.push("/")}
-            className="text-zinc-500 hover:text-white"
+            className="mb-4 -ml-2 text-zinc-400 hover:text-[#D2FF44] hover:bg-transparent transition-colors"
           >
-            <ChevronLeft size={20} />
+            <ChevronLeft size={16} className="mr-1" /> Back to Projects
           </Button>
-          <div>
-            {loading ? (
-              <div className="h-4 w-24 bg-zinc-800 animate-pulse rounded" />
-            ) : (
-              <h2 className="font-bold text-sm truncate w-40">
-                {project?.name || "Untitled"}
-              </h2>
-            )}
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider">
-              Asset Library
-            </p>
+          <h1 className="text-2xl font-black tracking-tight text-white mb-1">
+            {project?.name || "Loading..."}
+          </h1>
+          <div className="flex items-center gap-2 text-zinc-500 text-xs font-mono uppercase tracking-wider">
+            <Calendar size={12} />
+            <span>Production Binder</span>
           </div>
         </div>
 
         <Tabs defaultValue="cast" className="flex-1 flex flex-col">
-          <div className="px-4 pt-4">
-            {/* RESTORED ORIGINAL STYLING: grid-cols-2, original colors */}
-            <TabsList className="w-full bg-zinc-950 border border-zinc-800 p-1 grid grid-cols-2">
+          <div className="px-6 pt-6">
+            <TabsList className="w-full bg-zinc-900 border border-zinc-800 p-1 grid grid-cols-2">
               <TabsTrigger
                 value="cast"
-                className="flex-1 text-xs font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+                className="text-[10px] font-bold text-zinc-400 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black hover:text-[#D2FF44] data-[state=active]:hover:text-black transition-colors"
               >
-                Cast
+                CAST ({castAssets.length})
               </TabsTrigger>
               <TabsTrigger
                 value="loc"
-                className="flex-1 text-xs font-bold text-zinc-500 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black"
+                className="text-[10px] font-bold text-zinc-400 data-[state=active]:bg-[#D2FF44] data-[state=active]:text-black hover:text-[#D2FF44] data-[state=active]:hover:text-black transition-colors"
               >
-                Locs
+                LOCS ({locAssets.length})
               </TabsTrigger>
             </TabsList>
           </div>
 
-          <ScrollArea className="flex-1 p-4">
+          <ScrollArea className="flex-1 p-6">
             <TabsContent value="cast" className="mt-0 space-y-4">
-              <Link
-                href={`/studio/${projectId}/generate/cast`}
-                className="block"
+              <Button
+                asChild
+                className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-10 shadow-[0_0_15px_rgba(210,255,68,0.15)] transition-all"
               >
-                <Button className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-9">
-                  <Plus size={14} className="mr-1" /> Generate Actor
-                </Button>
-              </Link>
-              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href={`/studio/${projectId}/generate/cast`}
+                  className="block flex items-center justify-center"
+                >
+                  <Plus size={14} className="mr-1" /> New Cast Member
+                </Link>
+              </Button>
+              <div className="grid grid-cols-2 gap-3">
                 {castAssets.map((a) => (
                   <AssetCard key={a.id} asset={a} />
                 ))}
@@ -405,15 +277,18 @@ export default function StudioPage({
             </TabsContent>
 
             <TabsContent value="loc" className="mt-0 space-y-4">
-              <Link
-                href={`/studio/${projectId}/generate/loc`}
-                className="block"
+              <Button
+                asChild
+                className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-10 shadow-[0_0_15px_rgba(210,255,68,0.15)] transition-all"
               >
-                <Button className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black text-xs font-bold h-9">
-                  <Plus size={14} className="mr-1" /> Generate Location
-                </Button>
-              </Link>
-              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href={`/studio/${projectId}/generate/loc`}
+                  className="block flex items-center justify-center"
+                >
+                  <Plus size={14} className="mr-1" /> New Location
+                </Link>
+              </Button>
+              <div className="grid grid-cols-2 gap-3">
                 {locAssets.map((a) => (
                   <AssetCard key={a.id} asset={a} />
                 ))}
@@ -423,282 +298,150 @@ export default function StudioPage({
         </Tabs>
       </div>
 
-      {/* 2. CENTER STAGE (PREVIEW & TIMELINE) */}
-      <div className="flex-1 flex flex-col relative bg-zinc-950">
+      {/* 2. MAIN STAGE: SCENE GRID */}
+      <div className="flex-1 flex flex-col bg-zinc-950 relative overflow-hidden">
         {/* Header */}
-        <div className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/30 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Wand2 size={16} className="text-[#D2FF44]" />
-            <span className="text-xs font-bold text-zinc-200">
-              Director Mode
-            </span>
-            <Separator
-              orientation="vertical"
-              className="h-4 mx-2 bg-zinc-800"
-            />
-            <span className="text-[10px] font-mono text-zinc-500 uppercase">
-              Flux Dev + Local SVD
-            </span>
+        <div className="h-20 border-b border-zinc-800 flex items-center justify-between px-10 bg-zinc-900/20 backdrop-blur-sm">
+          <div>
+            <h2 className="text-xl font-bold flex items-center gap-3">
+              <Layout className="text-[#D2FF44]" /> Scenes Overview
+            </h2>
+            <p className="text-zinc-500 text-xs mt-1">
+              Manage your film's structure and sequence.
+            </p>
           </div>
-          {/* EXPORT BUTTON */}
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs border-zinc-700 bg-transparent hover:bg-zinc-800 text-zinc-300"
+          <Button
+            onClick={() => setIsSceneModalOpen(true)}
+            className="bg-[#D2FF44] text-black hover:bg-[#bce63b] font-bold shadow-[0_0_20px_rgba(210,255,68,0.2)] hover:shadow-[0_0_30px_rgba(210,255,68,0.4)] transition-all"
+          >
+            <Plus size={16} className="mr-2" /> Create Scene
+          </Button>
+        </div>
+
+        {/* Content */}
+        <ScrollArea className="flex-1 p-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
+            {/* NEW SCENE BUTTON (Empty State) */}
+            <button
+              onClick={() => setIsSceneModalOpen(true)}
+              className="aspect-[16/9] border-2 border-dashed border-zinc-800 rounded-xl flex flex-col items-center justify-center text-zinc-600 hover:text-[#D2FF44] hover:border-[#D2FF44] hover:bg-zinc-900/50 transition-all group"
             >
-              <Download size={14} className="mr-2" /> Export
-            </Button>
-          </div>
-        </div>
-
-        {/* MAIN PREVIEW AREA */}
-        <div className="flex-1 flex items-center justify-center p-10 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-zinc-950 to-zinc-950">
-          {activeShotPreview ? (
-            <div className="relative max-h-full aspect-video shadow-2xl rounded-lg overflow-hidden border border-zinc-800 bg-black group">
-              {activeShotPreview.video_url ? (
-                <video
-                  src={activeShotPreview.video_url}
-                  controls
-                  autoPlay
-                  loop
-                  className="w-full h-full object-contain"
-                />
-              ) : activeShotPreview.keyframe_url ? (
-                <img
-                  src={activeShotPreview.keyframe_url}
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-zinc-700">
-                  <ImageIcon size={48} className="mb-4 opacity-20" />
-                  <p className="text-xs font-mono opacity-50">EMPTY SLOT</p>
-                </div>
-              )}
-              <div className="absolute top-4 left-4 bg-black/50 backdrop-blur px-2 py-1 rounded text-xs font-mono text-zinc-300 border border-white/10">
-                SHOT {activeShotPreview.order_index + 1}
+              <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-[#D2FF44] group-hover:text-black transition-all">
+                <Plus size={32} />
               </div>
-            </div>
-          ) : (
-            <div className="text-center space-y-4 opacity-30 select-none">
-              <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-zinc-700 flex items-center justify-center mx-auto text-zinc-600">
-                <Users size={32} />
-              </div>
-              <p className="text-sm font-medium text-zinc-500">
-                Select a shot to view
-              </p>
-            </div>
-          )}
-        </div>
+              <span className="font-bold">Add New Scene</span>
+            </button>
 
-        {/* 3. THE TIMELINE (SHOT SEQUENCER) */}
-        <div className="h-52 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-md flex flex-col z-10">
-          {/* Controls Bar - INCREASED HEIGHT FOR PADDING */}
-          <div className="h-14 border-b border-zinc-800/50 flex items-center px-4 justify-between bg-zinc-950/50">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#D2FF44] animate-pulse" />
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                  Sequencer
-                </span>
-              </div>
-
-              {/* Scene Selector */}
-              <Select value={activeSceneId} onValueChange={setActiveSceneId}>
-                <SelectTrigger className="h-8 w-[180px] bg-zinc-900 border-zinc-800 text-[10px]">
-                  <SelectValue placeholder="Select Scene" />
-                </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-zinc-800 text-white">
-                  {scenes.length === 0 && (
-                    <SelectItem value="default">No Scenes</SelectItem>
-                  )}
-                  {scenes.map((s) => (
-                    <SelectItem key={s.id} value={s.id.toString()}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {scenes.length === 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={createDefaultScene}
-                  className="h-8 text-[10px]"
-                >
-                  <Plus size={10} className="mr-1" /> Create Scene
-                </Button>
-              )}
-            </div>
-
-            <Button className="h-8 text-[10px] bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold rounded-full px-4 shadow-[0_0_15px_rgba(210,255,68,0.2)]">
-              Export
-            </Button>
-          </div>
-
-          {/* The Rail */}
-          <ScrollArea className="flex-1 w-full whitespace-nowrap p-4">
-            <div className="flex items-center gap-2 min-w-max">
-              {activeScene?.shots.map((shot, index) => (
-                <div key={shot.id} className="flex items-center gap-2">
-                  {/* SHOT CARD */}
-                  <div
-                    onClick={() => setActiveShotId(shot.id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => handleDrop(e, shot.id)}
-                    className={`
-                                w-40 aspect-video rounded-md border-2 relative group cursor-pointer transition-all flex-shrink-0 overflow-hidden
-                                ${
-                                  activeShotId === shot.id
-                                    ? "border-[#D2FF44]"
-                                    : "border-zinc-800 hover:border-zinc-600"
-                                }
-                                ${
-                                  !shot.keyframe_url
-                                    ? "border-dashed bg-zinc-900/30"
-                                    : "bg-black"
-                                }
-                            `}
-                  >
-                    {shot.keyframe_url ? (
-                      <>
-                        <img
-                          src={shot.keyframe_url}
-                          className="w-full h-full object-cover"
-                        />
-                        {shot.video_url && (
-                          <div className="absolute top-2 right-2 bg-black/60 rounded-full p-1 border border-[#D2FF44]/50">
-                            <Video size={10} className="text-[#D2FF44]" />
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-600 pointer-events-none">
-                        <Download size={20} className="mb-2 opacity-50" />
-                        <span className="text-[9px] font-bold opacity-50">
-                          DROP ASSET
-                        </span>
-                      </div>
-                    )}
-                    <div className="absolute top-0 left-0 bg-black/80 text-[9px] text-white px-1.5 py-0.5 rounded-br-sm font-mono border-r border-b border-zinc-800">
-                      {index + 1}
-                    </div>
+            {/* SCENE CARDS */}
+            {scenes.map((scene) => (
+              <div
+                key={scene.id}
+                onClick={() =>
+                  router.push(`/studio/${projectId}/scene/${scene.id}`)
+                }
+                className="aspect-[16/9] bg-zinc-900 rounded-xl border border-zinc-800 p-6 flex flex-col justify-between hover:border-[#D2FF44] hover:shadow-[0_0_30px_rgba(210,255,68,0.1)] transition-all cursor-pointer group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="bg-[#D2FF44] text-black rounded-full p-2">
+                    <ArrowRight size={16} />
                   </div>
+                </div>
 
-                  {/* BRIDGE BUTTON (Only between shots) */}
-                  {index < activeScene.shots.length && (
-                    <div className="relative flex flex-col items-center justify-center w-8 gap-1 z-10">
-                      <div className="h-[2px] w-full bg-zinc-800 absolute top-1/2 -z-10"></div>
-                      <Button
-                        onClick={() => openBridgeMenu(index)}
-                        disabled={!shot.keyframe_url}
-                        variant="outline"
-                        size="icon"
-                        className={`
-                                        w-6 h-6 rounded-full border shadow-sm transition-all
-                                        ${
-                                          shot.video_url
-                                            ? "bg-zinc-900 border-[#D2FF44] text-[#D2FF44]"
-                                            : "bg-zinc-950 border-zinc-700 text-zinc-600 hover:border-white hover:text-white"
-                                        }
-                                    `}
-                      >
-                        {shot.status === "animating" ? (
-                          <Loader2 size={10} className="animate-spin" />
-                        ) : (
-                          <LinkIcon size={10} />
-                        )}
-                      </Button>
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-2 group-hover:text-[#D2FF44] transition-colors">
+                    {scene.name}
+                  </h3>
+                  <p className="text-zinc-500 text-sm line-clamp-3 leading-relaxed">
+                    {scene.description || "No atmospheric description set."}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 border-t border-zinc-800 pt-4 mt-4">
+                  <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 group-hover:text-zinc-300">
+                    <Film size={14} />
+                    <span>{scene.shots.length} SHOTS</span>
+                  </div>
+                  {scene.shots.some((s) => s.status === "complete") && (
+                    <div className="flex items-center gap-2 text-xs font-mono text-[#D2FF44]">
+                      <Clock size={14} />
+                      <span>IN PROGRESS</span>
                     </div>
                   )}
                 </div>
-              ))}
-
-              {/* ADD SHOT BUTTON */}
-              <div className="pl-2">
-                <Button
-                  onClick={addShotSlot}
-                  variant="ghost"
-                  className="h-20 w-20 border border-dashed border-zinc-800 text-zinc-600 hover:text-white hover:bg-zinc-900 hover:border-zinc-500 rounded-md flex flex-col gap-2"
-                >
-                  <Plus size={20} />
-                  <span className="text-[9px]">Add Shot</span>
-                </Button>
               </div>
-            </div>
-          </ScrollArea>
-        </div>
+            ))}
+          </div>
+        </ScrollArea>
       </div>
 
-      {/* BRIDGE MODAL */}
-      <Dialog open={isBridgeOpen} onOpenChange={setIsBridgeOpen}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-md">
+      {/* MODALS */}
+      <Dialog open={isSceneModalOpen} onOpenChange={setIsSceneModalOpen}>
+        <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md shadow-[0_0_50px_rgba(210,255,68,0.15)]">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-[#D2FF44]">
-              <Wand2 size={18} />
-              <span>Generate Motion</span>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+              <Layout className="text-[#D2FF44]" /> New Scene
             </DialogTitle>
-            <DialogDescription className="text-zinc-400 text-xs">
-              Bridge this shot to the next using Local SVD/Wan.
+            <DialogDescription className="text-zinc-400">
+              Define the setting and atmosphere. This "Master Context" will
+              guide the AI for every shot in this scene.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Tabs
-              value={bridgeMode}
-              onValueChange={(v) => setBridgeMode(v as any)}
-              className="w-full"
-            >
-              <TabsList className="w-full bg-zinc-950 border border-zinc-800">
-                <TabsTrigger
-                  value="draft"
-                  className="flex-1 text-xs data-[state=active]:bg-zinc-800 data-[state=active]:text-[#D2FF44]"
-                >
-                  Draft (Fast)
-                </TabsTrigger>
-                <TabsTrigger
-                  value="final"
-                  className="flex-1 text-xs data-[state=active]:bg-zinc-800 data-[state=active]:text-[#D2FF44]"
-                >
-                  Final (Slow)
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <Textarea
-              value={bridgePrompt}
-              onChange={(e) => setBridgePrompt(e.target.value)}
-              className="bg-zinc-950 border-zinc-800 text-sm h-24 focus-visible:ring-[#D2FF44]"
-              placeholder="Describe the movement (e.g. Slow zoom in)..."
-            />
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-xs uppercase font-bold text-zinc-500">
+                Scene Heading
+              </Label>
+              <Input
+                value={newSceneName}
+                onChange={(e) => setNewSceneName(e.target.value)}
+                placeholder="e.g. SCENE 1 - INT. HOTEL ROOM - DAY"
+                className="bg-zinc-900 border-zinc-800 focus:border-[#D2FF44] font-mono text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs uppercase font-bold text-zinc-500">
+                Master Context
+              </Label>
+              <Textarea
+                value={newSceneDesc}
+                onChange={(e) => setNewSceneDesc(e.target.value)}
+                placeholder="Describe the mood, lighting, and environment. (e.g. 'Heavy rain outside. Cold blue lighting. The room is messy.')"
+                className="bg-zinc-900 border-zinc-800 focus:border-[#D2FF44] h-32 leading-relaxed text-white"
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsBridgeOpen(false)}>
+            <Button variant="ghost" onClick={() => setIsSceneModalOpen(false)}>
               Cancel
             </Button>
             <Button
-              onClick={handleGenerateBridge}
-              className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold"
+              onClick={handleCreateScene}
+              className="bg-[#D2FF44] text-black font-bold hover:bg-[#bce63b]"
             >
-              Generate
+              Create Scene
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* DELETE MODAL */}
+      {/* Edit/Delete Modals (Reused) */}
       <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
         <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex gap-2">
-              <AlertTriangle className="text-[#D2FF44]" /> Delete Asset?
+              <Trash2 className="text-[#D2FF44]" /> Delete Asset?
             </DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              This will permanently delete the video file from your disk. This
+              action cannot be undone.
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setIsDeleteModalOpen(false)}>
               Cancel
             </Button>
             <Button
-              onClick={handleConfirmDelete}
+              onClick={handleDeleteAsset}
               className="bg-[#D2FF44] text-black font-bold"
             >
               Delete
@@ -706,8 +449,6 @@ export default function StudioPage({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* EDIT MODAL */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
         <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-md">
           <DialogHeader>
@@ -716,7 +457,7 @@ export default function StudioPage({
           <Input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            className="bg-zinc-950 border-zinc-800"
+            className="bg-zinc-950 border-zinc-800 focus:border-[#D2FF44]"
           />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setIsEditModalOpen(false)}>

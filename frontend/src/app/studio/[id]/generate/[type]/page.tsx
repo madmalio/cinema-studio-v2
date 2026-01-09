@@ -12,6 +12,7 @@ import {
   Camera,
   Aperture,
   Film,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,7 @@ export default function GeneratorPage({
   const [selectedCamera, setSelectedCamera] = useState("Arri Alexa 35");
   const [selectedLens, setSelectedLens] = useState("Cooke S4/i Prime");
   const [selectedFocal, setSelectedFocal] = useState("35mm");
+  const [isChroma, setIsChroma] = useState(false); // <--- NEW STATE
 
   const typeLabel =
     type === "loc" ? "Location" : type.charAt(0).toUpperCase() + type.slice(1);
@@ -89,10 +91,12 @@ export default function GeneratorPage({
         body: JSON.stringify({
           project_id: id,
           type: type,
+          name: name || (type === "cast" ? "New Character" : "New Location"), // Send Name
           prompt: prompt,
           camera: selectedCamera,
           lens: selectedLens,
           focal_length: selectedFocal,
+          chroma_key: isChroma, // Send Chroma Flag
         }),
       });
 
@@ -355,6 +359,50 @@ export default function GeneratorPage({
                     ))}
                   </div>
                 </div>
+
+                {/* NEW: Green Screen Toggle */}
+                <div
+                  onClick={() => setIsChroma(!isChroma)}
+                  className={`
+                        mt-4 border rounded-lg p-3 cursor-pointer transition-all flex items-center justify-between group
+                        ${
+                          isChroma
+                            ? "bg-[#D2FF44]/10 border-[#D2FF44]"
+                            : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
+                        }
+                    `}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`p-1.5 rounded-full transition-colors ${
+                        isChroma
+                          ? "bg-[#D2FF44] text-black"
+                          : "bg-zinc-900 text-zinc-600"
+                      }`}
+                    >
+                      <Layers size={14} />
+                    </div>
+                    <div>
+                      <h3
+                        className={`text-xs font-bold transition-colors ${
+                          isChroma ? "text-[#D2FF44]" : "text-zinc-400"
+                        }`}
+                      >
+                        Green Screen Mode
+                      </h3>
+                      <p className="text-[9px] text-zinc-600">
+                        Generates clean chroma key background.
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
+                      isChroma
+                        ? "bg-[#D2FF44] border-[#D2FF44]"
+                        : "border-zinc-700"
+                    }`}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -363,8 +411,7 @@ export default function GeneratorPage({
             <Button
               onClick={handleGenerate}
               disabled={isGenerating || !prompt}
-              size="lg"
-              className="w-full bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold shadow-[0_0_20px_rgba(210,255,68,0.2)] disabled:opacity-50 transition-all"
+              className="w-full h-14 bg-[#D2FF44] text-black font-bold text-lg hover:bg-[#bce63b] shadow-[0_0_20px_rgba(210,255,68,0.3)] disabled:opacity-50 transition-all"
             >
               {isGenerating ? (
                 <>

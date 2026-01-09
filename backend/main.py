@@ -1,21 +1,22 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+import sqlite3
+import cv2 # <--- NEW IMPORT
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import sqlite3
-import os
 
-# --- IMPORTS FROM YOUR ENGINES ---
-# 1. The Local Image Engine (Flux on your RTX 3060)
+# --- IMPORTS ---
 from runpod_client import generate_cinematic_image 
+from local_video import generate_wan_video 
+from director import get_director_prompt 
 
-# 2. The Local Video Engine (SVD on your RTX 3060)
-# WE SWAPPED THIS: using local_video instead of video_engine to save money
-from local_video import generate_local_video
+# CONFIG
+OUTPUT_DIR = "generated"
 
 app = FastAPI()
-
-# 1. SETUP CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "*"], 
@@ -24,19 +25,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. MOUNT STATIC FOLDER
-if not os.path.exists("generated"):
-    os.makedirs("generated")
-app.mount("/generated", StaticFiles(directory="generated"), name="generated")
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+app.mount("/generated", StaticFiles(directory=OUTPUT_DIR), name="generated")
 
-# 3. DATABASE HELPER
 def get_db_connection():
     conn = sqlite3.connect('studio.db')
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- DATA MODELS ---
+# --- DB INIT ---
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, aspect_ratio TEXT DEFAULT '16:9', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, type TEXT, name TEXT, prompt TEXT, image_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS scenes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, name TEXT, description TEXT, order_index INTEGER, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS shots (id INTEGER PRIMARY KEY AUTOINCREMENT, scene_id INTEGER, prompt TEXT, reference_asset_id INTEGER, status TEXT, keyframe_url TEXT, video_url TEXT, order_index INTEGER, FOREIGN KEY(scene_id) REFERENCES scenes(id) ON DELETE CASCADE)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS takes (id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id INTEGER, video_url TEXT, prompt TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE)''')
+    
+    try:
+        conn.execute("ALTER TABLE scenes ADD COLUMN description TEXT")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
 
+init_db()
+
+# --- MODELS ---
 class Project(BaseModel):
     name: str
     description: str
@@ -49,22 +65,30 @@ class ProjectUpdate(BaseModel):
 
 class GenerateRequest(BaseModel):
     project_id: int
-    type: str  # "cast", "loc", "prop", or "shot"
+    type: str
     prompt: str
+    name: str = "New Asset"
     camera: str = "Arri Alexa 35"
     lens: str = "Anamorphic"
     focal_length: str = "35mm"
+    chroma_key: bool = False
 
-class AnimateRequest(BaseModel):
-    asset_id: int
+class DirectorRequest(BaseModel):
     prompt: str
+    style: str = "Cinematic"
+    camera_move: str = "Push In"
+
+class ShotAnimateRequest(BaseModel):
+    prompt: str
+    style: str = "Cinematic"
+    camera_move: str = "Push In"
 
 class AssetUpdate(BaseModel):
     name: str
 
-# NEW: Scene & Shot Models
 class Scene(BaseModel):
     name: str
+    description: str | None = ""
 
 class ShotRequest(BaseModel):
     scene_id: int
@@ -77,25 +101,22 @@ class ShotUpdate(BaseModel):
     video_url: str | None = None
     status: str | None = None
 
-# --- PROJECT ROUTES ---
+class SelectTakeRequest(BaseModel):
+    video_url: str
 
+class StitchRequest(BaseModel):
+    source_video_url: str | None = None
+
+# --- ROUTES ---
 @app.get("/")
 def read_root():
-    return {"message": "Cinema Studio Backend v4.0 (Scene Builder Edition)"}
+    return {"message": "Cinema Studio Backend v7.8 (Stitch Mode Enabled)"}
 
+# ... [KEEP ALL STANDARD PROJECT/SCENE/ASSET ROUTES HERE] ...
+# (I am condensing them to save space, but DO NOT DELETE THEM from your file)
 @app.get("/projects")
 def get_projects():
     conn = get_db_connection()
-    # Ensure table exists
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            name TEXT, 
-            description TEXT,
-            aspect_ratio TEXT DEFAULT '16:9', 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
     projects = conn.execute('SELECT * FROM projects ORDER BY created_at DESC').fetchall()
     conn.close()
     return {"projects": projects}
@@ -113,32 +134,7 @@ def get_project(project_id: int):
 def create_project(project: Project):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Ensure tables exist
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            name TEXT, 
-            description TEXT,
-            aspect_ratio TEXT DEFAULT '16:9', 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS assets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER,
-            type TEXT,
-            name TEXT,
-            prompt TEXT,
-            image_path TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-        )
-    ''')
-    
-    cursor.execute('INSERT INTO projects (name, description, aspect_ratio) VALUES (?, ?, ?)', 
-                   (project.name, project.description, project.aspect_ratio))
+    cursor.execute('INSERT INTO projects (name, description, aspect_ratio) VALUES (?, ?, ?)', (project.name, project.description, project.aspect_ratio))
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
@@ -147,9 +143,8 @@ def create_project(project: Project):
 @app.delete("/projects/{project_id}")
 def delete_project(project_id: int):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON")
-    cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
     conn.close()
     return {"message": "Project deleted"}
@@ -157,30 +152,14 @@ def delete_project(project_id: int):
 @app.put("/projects/{project_id}")
 def update_project(project_id: int, project: ProjectUpdate):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE projects SET name = ?, description = ?, aspect_ratio = ? WHERE id = ?",
-                   (project.name, project.description, project.aspect_ratio, project_id))
+    conn.execute("UPDATE projects SET name = ?, description = ?, aspect_ratio = ? WHERE id = ?", (project.name, project.description, project.aspect_ratio, project_id))
     conn.commit()
     conn.close()
     return {"message": "Updated"}
 
-# --- ASSET ROUTES ---
-
 @app.get("/projects/{project_id}/assets")
 def get_project_assets(project_id: int):
     conn = get_db_connection()
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS assets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER,
-            type TEXT,
-            name TEXT,
-            prompt TEXT,
-            image_path TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-        )
-    ''')
     assets = conn.execute('SELECT * FROM assets WHERE project_id = ? ORDER BY id DESC', (project_id,)).fetchall()
     conn.close()
     return {"assets": assets}
@@ -188,8 +167,7 @@ def get_project_assets(project_id: int):
 @app.put("/assets/{asset_id}")
 def update_asset(asset_id: int, asset: AssetUpdate):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE assets SET name = ? WHERE id = ?", (asset.name, asset_id))
+    conn.execute("UPDATE assets SET name = ? WHERE id = ?", (asset.name, asset_id))
     conn.commit()
     conn.close()
     return {"message": "Asset updated"}
@@ -198,49 +176,24 @@ def update_asset(asset_id: int, asset: AssetUpdate):
 def delete_asset(asset_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 1. FIND THE FILE TO DELETE
     asset = cursor.execute("SELECT image_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
-    
     if asset:
-        image_url = asset['image_path']
-        filename = image_url.split("/")[-1]
-        file_path = os.path.join("generated", filename)
-        
-        # 2. DELETE FROM DISK
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                print(f"🗑️ Deleted file: {file_path}")
-            except Exception as e:
-                print(f"⚠️ Failed to delete file: {e}")
-
-    # 3. DELETE FROM DB
+        try:
+            os.remove(os.path.join(OUTPUT_DIR, asset['image_path'].split("/")[-1]))
+        except: pass
     cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     conn.commit()
     conn.close()
     return {"message": "Asset deleted"}
 
-# --- SCENE & SHOT ROUTES (THE STORYBOARD) ---
-
 @app.get("/projects/{project_id}/scenes")
 def get_scenes(project_id: int):
     conn = get_db_connection()
-    # Ensure tables exist
-    conn.execute('''CREATE TABLE IF NOT EXISTS scenes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, name TEXT, order_index INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS shots (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, scene_id INTEGER, prompt TEXT, reference_asset_id INTEGER, keyframe_url TEXT, video_url TEXT, status TEXT DEFAULT 'pending', order_index INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(scene_id) REFERENCES scenes(id) ON DELETE CASCADE
-    )''')
-    
     scenes = conn.execute('SELECT * FROM scenes WHERE project_id = ? ORDER BY order_index ASC', (project_id,)).fetchall()
-    
     results = []
     for scene in scenes:
         shots = conn.execute('SELECT * FROM shots WHERE scene_id = ? ORDER BY order_index ASC', (scene['id'],)).fetchall()
         results.append({**dict(scene), "shots": shots})
-        
     conn.close()
     return {"scenes": results}
 
@@ -248,29 +201,17 @@ def get_scenes(project_id: int):
 def create_scene(project_id: int, scene: Scene):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO scenes (project_id, name) VALUES (?, ?)', (project_id, scene.name))
+    cursor.execute('INSERT INTO scenes (project_id, name, description) VALUES (?, ?, ?)', (project_id, scene.name, scene.description))
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
-    return {"id": new_id, "name": scene.name, "shots": []}
-
-@app.delete("/scenes/{scene_id}")
-def delete_scene(scene_id: int):
-    conn = get_db_connection()
-    conn.execute("DELETE FROM scenes WHERE id = ?", (scene_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Scene deleted"}
+    return {"id": new_id, "name": scene.name, "description": scene.description, "shots": []}
 
 @app.post("/shots")
 def create_shot(shot: ShotRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Create an empty slot in the timeline
-    cursor.execute('''
-        INSERT INTO shots (scene_id, prompt, reference_asset_id, status)
-        VALUES (?, ?, ?, 'pending')
-    ''', (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id))
+    cursor.execute('INSERT INTO shots (scene_id, prompt, reference_asset_id, status) VALUES (?, ?, ?, "pending")', (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id))
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
@@ -280,154 +221,168 @@ def create_shot(shot: ShotRequest):
 def update_shot(shot_id: int, update: ShotUpdate):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     if update.keyframe_url:
         cursor.execute("UPDATE shots SET keyframe_url = ?, status = 'ready_for_video' WHERE id = ?", (update.keyframe_url, shot_id))
     if update.video_url:
         cursor.execute("UPDATE shots SET video_url = ?, status = 'complete' WHERE id = ?", (update.video_url, shot_id))
-        
     conn.commit()
     conn.close()
     return {"success": True}
 
-# --- GENERATOR ENGINES ---
-
-# 1. LOCAL IMAGE GENERATION (FLUX)
 @app.post("/generate")
 def generate_asset(request: GenerateRequest):
-    print(f"🎨 Received Image Request: {request.prompt}")
-    
     try:
         conn = get_db_connection()
         project = conn.execute('SELECT aspect_ratio FROM projects WHERE id = ?', (request.project_id,)).fetchone()
         conn.close()
+        ratio = project['aspect_ratio'] if project else "16:9"
         
-        ratio = project['aspect_ratio'] if project and 'aspect_ratio' in project.keys() else "16:9"
+        final_prompt = request.prompt
+        if request.chroma_key:
+            final_prompt += ", solid hex code #00FF00 green background, chroma key, flat studio lighting, no shadows on wall, separation from background"
 
-        # Call Local Flux Engine
-        image_path = generate_cinematic_image(
-            prompt=request.prompt, 
-            aspect_ratio=ratio,
-            camera=request.camera,
-            lens=request.lens,
-            focal_length=request.focal_length
-        )
-        
+        image_path = generate_cinematic_image(prompt=final_prompt, aspect_ratio=ratio, camera=request.camera, lens=request.lens, focal_length=request.focal_length)
         full_image_url = f"http://127.0.0.1:8000{image_path}"
         
-        # We record it in Assets table even if it's for a shot (good for history)
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            '''
-            INSERT INTO assets (project_id, type, name, prompt, image_path)
-            VALUES (?, ?, ?, ?, ?)
-            ''',
-            (request.project_id, request.type, "New Generation", request.prompt, full_image_url)
-        )
+        cursor.execute('INSERT INTO assets (project_id, type, name, prompt, image_path) VALUES (?, ?, ?, ?, ?)', (request.project_id, request.type, request.name, request.prompt, full_image_url))
         conn.commit()
         new_id = cursor.lastrowid
         conn.close()
-        
         return {"success": True, "image_url": full_image_url, "asset_id": new_id}
-
     except Exception as e:
-        print(f"❌ Image Generation Error: {e}")
         return {"success": False, "error": str(e)}
 
-# 2. ASSET ANIMATION (LOCAL SVD)
-# Used by the "Animate" button in Asset Library
-@app.post("/animate")
-def animate_asset(request: AnimateRequest):
-    print(f"🎥 Animation Request for Asset ID: {request.asset_id}")
-    
+@app.get("/shots/{shot_id}/takes")
+def get_shot_takes(shot_id: int):
+    conn = get_db_connection()
+    takes = conn.execute('SELECT * FROM takes WHERE shot_id = ? ORDER BY created_at DESC', (shot_id,)).fetchall()
+    conn.close()
+    return {"takes": takes}
+
+@app.post("/shots/{shot_id}/select_take")
+def select_take(shot_id: int, req: SelectTakeRequest):
+    conn = get_db_connection()
+    conn.execute("UPDATE shots SET video_url = ? WHERE id = ?", (req.video_url, shot_id))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+@app.delete("/takes/{take_id}")
+def delete_take(take_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Check if we got a real ID or a dummy ID (like from SceneBoard hacks)
-    if request.asset_id == 99999 and request.prompt.startswith("generated/"):
-        # Handle direct path (SceneBoard quick fix)
-        local_path = request.prompt
-        # Fake asset obj for DB insert later
-        asset = {'project_id': 1, 'name': 'Scene Shot'} 
-    else:
-        # Standard lookup
-        asset = cursor.execute("SELECT * FROM assets WHERE id = ?", (request.asset_id,)).fetchone()
-        if not asset:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Asset not found")
-            
-        full_url = asset['image_path']
-        filename = full_url.split("/")[-1]
-        local_path = os.path.join("generated", filename)
+    take = cursor.execute("SELECT video_url FROM takes WHERE id = ?", (take_id,)).fetchone()
+    if take and take['video_url']:
+        try: os.remove(os.path.join(OUTPUT_DIR, take['video_url'].split("/")[-1]))
+        except: pass
+    cursor.execute("DELETE FROM takes WHERE id = ?", (take_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
 
-    if not os.path.exists(local_path):
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"File not found on disk: {local_path}")
-
-    # GENERATE VIDEO LOCALLY
+@app.post("/director/enhance")
+def enhance_prompt_endpoint(request: DirectorRequest):
     try:
-        video_web_path = generate_local_video(local_path)
-        full_video_url = f"http://127.0.0.1:8000{video_web_path}"
-
-        # Save as a new "video" asset
-        cursor.execute(
-            '''
-            INSERT INTO assets (project_id, type, name, prompt, image_path)
-            VALUES (?, ?, ?, ?, ?)
-            ''',
-            (asset['project_id'], "video", f"Video of {asset['name']}", "SVD Animation", full_video_url)
-        )
-        conn.commit()
-        new_id = cursor.lastrowid
-        
-        return {"success": True, "video_url": full_video_url, "asset_id": new_id}
-
+        enhanced_text = get_director_prompt(request.prompt, request.style, request.camera_move)
+        return {"success": True, "enhanced_prompt": enhanced_text}
     except Exception as e:
-        print(f"❌ Video Error: {e}")
         return {"success": False, "error": str(e)}
-    finally:
-        conn.close()
 
-# 3. SHOT ANIMATION (LOCAL SVD)
-# Used by the Scene Board "Animate" button
 @app.post("/shots/{shot_id}/animate")
-def animate_shot_endpoint(shot_id: int):
-    print(f"🎬 Animating Shot ID: {shot_id}")
+def animate_shot_endpoint(shot_id: int, request: ShotAnimateRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 1. Get the Shot
     shot = cursor.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
     if not shot or not shot['keyframe_url']:
         conn.close()
-        return {"success": False, "error": "No keyframe found to animate"}
-
-    # 2. Get Local Path
-    filename = shot['keyframe_url'].split("/")[-1]
-    local_path = os.path.join("generated", filename)
+        return {"success": False, "error": "Shot has no keyframe"}
     
+    filename = shot['keyframe_url'].split("/")[-1]
+    local_path = os.path.join(OUTPUT_DIR, filename)
     if not os.path.exists(local_path):
         conn.close()
-        return {"success": False, "error": "Source image missing from disk"}
+        return {"success": False, "error": "Source file missing"}
     
-    # 3. Run Local Engine
     try:
-        video_web_path = generate_local_video(local_path)
+        video_web_path = generate_wan_video(local_image_path=local_path, prompt=request.prompt, style=request.style, camera=request.camera_move)
         full_video_url = f"http://127.0.0.1:8000{video_web_path}"
-        
-        # 4. Update Shot Record
         cursor.execute("UPDATE shots SET video_url = ?, status = 'complete' WHERE id = ?", (full_video_url, shot_id))
+        cursor.execute("INSERT INTO takes (shot_id, video_url, prompt) VALUES (?, ?, ?)", (shot_id, full_video_url, request.prompt))
         conn.commit()
-        
         return {"success": True, "video_url": full_video_url}
-        
     except Exception as e:
-        print(f"Animation Error: {e}")
+        print(f"Sequencer Error: {e}")
         return {"success": False, "error": str(e)}
     finally:
         conn.close()
 
+# --- NEW STITCH ENDPOINT ---
+@app.post("/shots/{shot_id}/stitch")
+def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Determine which video to use
+    video_url_to_use = request.source_video_url
+    
+    # If frontend didn't send one, fallback to the Main Shot
+    if not video_url_to_use:
+        shot = cursor.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
+        if shot and shot['video_url']:
+            video_url_to_use = shot['video_url']
+    
+    # Validate we found a video
+    if not video_url_to_use:
+        conn.close()
+        return {"success": False, "error": "No video selected to stitch from"}
+    
+    try:
+        # Extract Last Frame using OpenCV
+        video_filename = video_url_to_use.split("/")[-1]
+        local_video_path = os.path.join(OUTPUT_DIR, video_filename)
+        
+        if not os.path.exists(local_video_path):
+             return {"success": False, "error": f"Video file not found: {video_filename}"}
+
+        cap = cv2.VideoCapture(local_video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames - 1)
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret:
+            return {"success": False, "error": "Could not extract last frame"}
+            
+        # Save as new Image
+        # We append a random ID or timestamp to ensure uniqueness if needed, 
+        # but here we use the previous shot ID + frame count
+        new_filename = f"stitch_from_{shot_id}_{total_frames}.jpg"
+        new_file_path = os.path.join(OUTPUT_DIR, new_filename)
+        cv2.imwrite(new_file_path, frame)
+        new_keyframe_url = f"http://127.0.0.1:8000/generated/{new_filename}"
+        
+        # Get Scene ID to keep it in the same bucket
+        shot_data = cursor.execute("SELECT scene_id FROM shots WHERE id = ?", (shot_id,)).fetchone()
+        scene_id = shot_data['scene_id'] if shot_data else 1
+
+        # Create New Shot
+        cursor.execute('''
+            INSERT INTO shots (scene_id, prompt, keyframe_url, status)
+            VALUES (?, ?, ?, 'ready_for_video')
+        ''', (scene_id, f"Continuation of Shot #{shot_id}...", new_keyframe_url))
+        
+        new_shot_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "new_shot_id": new_shot_id}
+        
+    except Exception as e:
+        print(f"Stitch Error: {e}")
+        return {"success": False, "error": str(e)}
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
