@@ -2,7 +2,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import sqlite3
-import cv2 # <--- NEW IMPORT
+import cv2
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -107,13 +108,15 @@ class SelectTakeRequest(BaseModel):
 class StitchRequest(BaseModel):
     source_video_url: str | None = None
 
+class ReorderRequest(BaseModel):
+    shot_ids: list[int]
+
 # --- ROUTES ---
 @app.get("/")
 def read_root():
     return {"message": "Cinema Studio Backend v7.8 (Stitch Mode Enabled)"}
 
 # ... [KEEP ALL STANDARD PROJECT/SCENE/ASSET ROUTES HERE] ...
-# (I am condensing them to save space, but DO NOT DELETE THEM from your file)
 @app.get("/projects")
 def get_projects():
     conn = get_db_connection()
@@ -207,11 +210,47 @@ def create_scene(project_id: int, scene: Scene):
     conn.close()
     return {"id": new_id, "name": scene.name, "description": scene.description, "shots": []}
 
+# --- ADDITION 1: UPDATED PLAY ENDPOINT (Use order_index) ---
+@app.get("/scenes/{scene_id}/play")
+def play_scene_sequence(scene_id: int):
+    conn = get_db_connection()
+    # Get all shots with a completed video_url, ordered by order_index
+    shots = conn.execute('''
+        SELECT id, video_url, prompt FROM shots 
+        WHERE scene_id = ? AND video_url IS NOT NULL 
+        ORDER BY order_index ASC
+    ''', (scene_id,)).fetchall()
+    conn.close()
+    
+    return {"playlist": [dict(s) for s in shots]}
+
+# --- ADDITION 2: NEW REORDER ENDPOINT ---
+@app.put("/scenes/{scene_id}/reorder")
+def reorder_scenes(scene_id: int, request: ReorderRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Update order_index for each shot in the list based on the array position
+    for index, shot_id in enumerate(request.shot_ids):
+        cursor.execute(
+            "UPDATE shots SET order_index = ? WHERE id = ? AND scene_id = ?", 
+            (index, shot_id, scene_id)
+        )
+        
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
 @app.post("/shots")
 def create_shot(shot: ShotRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO shots (scene_id, prompt, reference_asset_id, status) VALUES (?, ?, ?, "pending")', (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id))
+    
+    last_shot = cursor.execute("SELECT MAX(order_index) as idx FROM shots WHERE scene_id = ?", (shot.scene_id,)).fetchone()
+    new_order = (last_shot['idx'] + 1) if last_shot['idx'] is not None else 0
+    
+    cursor.execute('INSERT INTO shots (scene_id, prompt, reference_asset_id, status, order_index) VALUES (?, ?, ?, "pending", ?)', 
+                   (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id, new_order))
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
@@ -228,6 +267,40 @@ def update_shot(shot_id: int, update: ShotUpdate):
     conn.commit()
     conn.close()
     return {"success": True}
+
+@app.delete("/shots/{shot_id}")
+def delete_shot(shot_id: int):
+    conn = get_db_connection()
+    conn.execute("PRAGMA foreign_keys = ON") 
+    cursor = conn.cursor()
+    
+    # 1. GET FILES TO DELETE (Cleanup disk space)
+    shot = cursor.execute("SELECT keyframe_url, video_url FROM shots WHERE id = ?", (shot_id,)).fetchone()
+    takes = cursor.execute("SELECT video_url FROM takes WHERE shot_id = ?", (shot_id,)).fetchall()
+    
+    files_to_delete = []
+    
+    if shot:
+        if shot['keyframe_url']: files_to_delete.append(shot['keyframe_url'])
+        if shot['video_url']: files_to_delete.append(shot['video_url'])
+        
+    for take in takes:
+        if take['video_url']: files_to_delete.append(take['video_url'])
+        
+    for url in files_to_delete:
+        try:
+            filename = url.split("/")[-1]
+            file_path = os.path.join(OUTPUT_DIR, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print(f"⚠️ Error deleting file {url}: {e}")
+
+    cursor.execute("DELETE FROM shots WHERE id = ?", (shot_id,))
+    
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Shot deleted"}
 
 @app.post("/generate")
 def generate_asset(request: GenerateRequest):
@@ -318,28 +391,46 @@ def animate_shot_endpoint(shot_id: int, request: ShotAnimateRequest):
     finally:
         conn.close()
 
-# --- NEW STITCH ENDPOINT ---
+# --- STITCH ENDPOINT (Context Aware) ---
 @app.post("/shots/{shot_id}/stitch")
 def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Determine which video to use
     video_url_to_use = request.source_video_url
+    source_prompt = ""
     
-    # If frontend didn't send one, fallback to the Main Shot
     if not video_url_to_use:
-        shot = cursor.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
+        shot = cursor.execute("SELECT video_url, prompt FROM shots WHERE id = ?", (shot_id,)).fetchone()
         if shot and shot['video_url']:
             video_url_to_use = shot['video_url']
+            source_prompt = shot['prompt']
+    else:
+        take = cursor.execute("SELECT prompt FROM takes WHERE video_url = ?", (video_url_to_use,)).fetchone()
+        if take:
+            source_prompt = take['prompt']
+        else:
+            shot_data = cursor.execute("SELECT prompt FROM shots WHERE id = ?", (shot_id,)).fetchone()
+            if shot_data:
+                source_prompt = shot_data['prompt']
     
-    # Validate we found a video
     if not video_url_to_use:
         conn.close()
         return {"success": False, "error": "No video selected to stitch from"}
     
+    new_prompt = "Continuation..."
+    if source_prompt:
+        if "[CONTEXT:" in source_prompt and "]" in source_prompt:
+            try:
+                parts = source_prompt.split("]", 1)
+                context_block = parts[0] + "]" 
+                new_prompt = f"{context_block} (Continue action here...)"
+            except:
+                new_prompt = f"{source_prompt} (Continued)"
+        else:
+            new_prompt = f"{source_prompt} (Continued)"
+
     try:
-        # Extract Last Frame using OpenCV
         video_filename = video_url_to_use.split("/")[-1]
         local_video_path = os.path.join(OUTPUT_DIR, video_filename)
         
@@ -355,23 +446,19 @@ def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
         if not ret:
             return {"success": False, "error": "Could not extract last frame"}
             
-        # Save as new Image
-        # We append a random ID or timestamp to ensure uniqueness if needed, 
-        # but here we use the previous shot ID + frame count
         new_filename = f"stitch_from_{shot_id}_{total_frames}.jpg"
         new_file_path = os.path.join(OUTPUT_DIR, new_filename)
         cv2.imwrite(new_file_path, frame)
         new_keyframe_url = f"http://127.0.0.1:8000/generated/{new_filename}"
         
-        # Get Scene ID to keep it in the same bucket
-        shot_data = cursor.execute("SELECT scene_id FROM shots WHERE id = ?", (shot_id,)).fetchone()
+        shot_data = cursor.execute("SELECT scene_id, order_index FROM shots WHERE id = ?", (shot_id,)).fetchone()
         scene_id = shot_data['scene_id'] if shot_data else 1
+        current_order = shot_data['order_index'] if shot_data else 0
 
-        # Create New Shot
         cursor.execute('''
-            INSERT INTO shots (scene_id, prompt, keyframe_url, status)
-            VALUES (?, ?, ?, 'ready_for_video')
-        ''', (scene_id, f"Continuation of Shot #{shot_id}...", new_keyframe_url))
+            INSERT INTO shots (scene_id, prompt, keyframe_url, status, order_index)
+            VALUES (?, ?, ?, 'ready_for_video', ?)
+        ''', (scene_id, new_prompt, new_keyframe_url, current_order + 1))
         
         new_shot_id = cursor.lastrowid
         conn.commit()

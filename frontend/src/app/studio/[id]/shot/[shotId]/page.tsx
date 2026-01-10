@@ -19,6 +19,7 @@ import {
   CornerDownRight,
   ArrowLeft,
   ArrowRight,
+  AlertTriangle, // <--- NEW IMPORT
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,9 +88,12 @@ export default function DirectorsLabPage({
   const [isRendering, setIsRendering] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
 
-  // Delete State
+  // Delete State (Takes)
   const [takeToDelete, setTakeToDelete] = useState<Take | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+  // Delete State (Shot) - NEW
+  const [isDeleteShotModalOpen, setIsDeleteShotModalOpen] = useState(false);
 
   // Scroll Ref
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -121,7 +125,6 @@ export default function DirectorsLabPage({
         if (currentIndex !== -1) {
           foundShot = allShots[currentIndex];
           setShot(foundShot);
-
           if (currentIndex > 0) setPrevShotId(allShots[currentIndex - 1].id);
           if (currentIndex < allShots.length - 1)
             setNextShotId(allShots[currentIndex + 1].id);
@@ -192,9 +195,9 @@ export default function DirectorsLabPage({
   const handleRender = async () => {
     if (!shot?.keyframe_url)
       return alert("Please upload a keyframe first (in Scene Builder).");
+
     setIsRendering(true);
     const finalCamera = camera === "Custom" ? customMove : camera;
-
     try {
       const res = await fetch(`http://127.0.0.1:8000/shots/${shotId}/animate`, {
         method: "POST",
@@ -205,7 +208,6 @@ export default function DirectorsLabPage({
           camera_move: finalCamera,
         }),
       });
-
       if (res.ok) {
         const data = await res.json();
         setActiveVideo(data.video_url);
@@ -245,6 +247,7 @@ export default function DirectorsLabPage({
     }
   };
 
+  // --- TAKE DELETION ---
   const initiateDeleteTake = (take: Take) => {
     setTakeToDelete(take);
     setIsDeleteModalOpen(true);
@@ -268,6 +271,19 @@ export default function DirectorsLabPage({
     setIsDeleteModalOpen(false);
     setTakeToDelete(null);
     fetchData();
+  };
+
+  // --- SHOT DELETION (NEW) ---
+  const handleDeleteShot = async () => {
+    try {
+      await fetch(`http://127.0.0.1:8000/shots/${shotId}`, {
+        method: "DELETE",
+      });
+      // Redirect back to scene page
+      router.push(`/studio/${projectId}/scene/${shot?.scene_id}`);
+    } catch (error) {
+      console.error("Failed to delete shot", error);
+    }
   };
 
   if (loading)
@@ -312,7 +328,18 @@ export default function DirectorsLabPage({
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
+            {/* DELETE BUTTON */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsDeleteShotModalOpen(true)}
+              className="text-zinc-600 hover:text-red-500 hover:bg-zinc-800 transition-colors"
+              title="Delete Shot"
+            >
+              <Trash2 size={16} />
+            </Button>
+            <div className="h-4 w-px bg-zinc-800" />
             <Button
               variant="outline"
               size="icon"
@@ -586,7 +613,7 @@ export default function DirectorsLabPage({
                       </div>
                     )}
 
-                    {/* NEW: HOVER ACTION ICONS */}
+                    {/* HOVER ACTION ICONS */}
                     <div className="absolute bottom-1 right-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 p-1 rounded backdrop-blur-sm z-20">
                       <button
                         onClick={(e) => {
@@ -627,7 +654,7 @@ export default function DirectorsLabPage({
         </div>
       </div>
 
-      {/* CONFIRM DELETE MODAL */}
+      {/* CONFIRM DELETE TAKE MODAL */}
       <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
         <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md">
           <DialogHeader>
@@ -648,6 +675,52 @@ export default function DirectorsLabPage({
               className="bg-[#D2FF44] text-black font-bold"
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* NEW: CONFIRM DELETE SHOT MODAL */}
+      <Dialog
+        open={isDeleteShotModalOpen}
+        onOpenChange={setIsDeleteShotModalOpen}
+      >
+        <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md shadow-[0_0_30px_rgba(210,255,68,0.2)]">
+          <DialogHeader>
+            <div className="flex items-center gap-2 text-[#D2FF44] mb-2">
+              <AlertTriangle
+                size={24}
+                className="fill-current text-black stroke-[#D2FF44]"
+              />
+              <DialogTitle className="text-xl font-bold text-white">
+                Delete Shot #{shot?.id}?
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-zinc-400">
+              This will permanently delete the entire shot and all{" "}
+              {takes.length} takes from your disk.
+              <br />
+              <br />
+              <span className="text-red-500 font-bold uppercase">
+                Warning:
+              </span>{" "}
+              You will be returned to the Scene Builder.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="ghost"
+              onClick={() => setIsDeleteShotModalOpen(false)}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-900"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteShot}
+              className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold border border-[#D2FF44]"
+            >
+              Confirm Delete
             </Button>
           </DialogFooter>
         </DialogContent>
