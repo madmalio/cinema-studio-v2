@@ -472,4 +472,22 @@ def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
     
 if __name__ == "__main__":
     import uvicorn
+    
+    print("\n🎥 SYSTEM CHECK:")
+    
+    # 1. Check Gemini
+    if os.environ.get("GEMINI_API_KEY"):
+        print("   ✅ Director Engine (Gemini): ONLINE")
+    else:
+        print("   ⚠️ Director Engine (Gemini): OFF (Missing GEMINI_API_KEY in .env)")
+
+    # 2. Check Directories
+    if os.path.exists(OUTPUT_DIR):
+        print(f"   ✅ Output Directory: {OUTPUT_DIR} (Ready)")
+    else:
+        print(f"   ⚠️ Output Directory: {OUTPUT_DIR} (Creating...)")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("   🚀 Starting Cinema Studio Backend on port 8000...\n")
+    
     uvicorn.run(app, host="0.0.0.0", port=8000)
