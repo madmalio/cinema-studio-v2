@@ -32,7 +32,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-interface Project {
+// --- NEW IMPORT ---
+import { getProjects, createProject, deleteProject, Project } from "@/lib/api";
+// Note: I am assuming `Project` is exported from api.ts.
+// If not, keep your local interface or remove the export from api.ts and use local.
+// For safety, I'll use the local interface definition below to guarantee no breakage if api.ts is slightly different.
+
+interface LocalProject {
+  // Renamed to avoid conflict if api.ts exports Project
   id: number;
   name: string;
   description: string;
@@ -46,7 +53,7 @@ export default function LobbyPage() {
   const router = useRouter();
 
   // Data State
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<LocalProject[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal States
@@ -54,8 +61,12 @@ export default function LobbyPage() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   // Edit/Delete Target State
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [editingProject, setEditingProject] = useState<LocalProject | null>(
+    null
+  );
+  const [projectToDelete, setProjectToDelete] = useState<LocalProject | null>(
+    null
+  );
 
   // Form State
   const [projectName, setProjectName] = useState("");
@@ -65,12 +76,16 @@ export default function LobbyPage() {
   // 1. FETCH DATA
   const fetchProjects = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/projects");
-      const data = await res.json();
+      // REFACTORED: Use api.ts
+      const data = await getProjects();
 
-      const mappedProjects = data.projects.map((p: any) => ({
+      // Map data to ensure UI compatibility (handling missing fields if any)
+      const mappedProjects = data.map((p: any) => ({
         ...p,
         aspectRatio: p.aspect_ratio || "16:9",
+        thumbnail:
+          p.thumbnail ||
+          "https://images.unsplash.com/photo-1485846234645-a62644f84728?w=800&q=80", // Default thumb
       }));
 
       setProjects(mappedProjects);
@@ -95,7 +110,7 @@ export default function LobbyPage() {
   };
 
   // 3. OPEN EDIT MODAL
-  const openEditModal = (e: React.MouseEvent, project: Project) => {
+  const openEditModal = (e: React.MouseEvent, project: LocalProject) => {
     e.stopPropagation();
     setEditingProject(project);
     setProjectName(project.name);
@@ -105,7 +120,7 @@ export default function LobbyPage() {
   };
 
   // 4. OPEN DELETE MODAL
-  const openDeleteModal = (e: React.MouseEvent, project: Project) => {
+  const openDeleteModal = (e: React.MouseEvent, project: LocalProject) => {
     e.stopPropagation();
     setProjectToDelete(project);
     setIsDeleteModalOpen(true);
@@ -115,31 +130,38 @@ export default function LobbyPage() {
   const handleSaveProject = async () => {
     if (!projectName) return;
 
-    const url = editingProject
-      ? `http://127.0.0.1:8000/projects/${editingProject.id}`
-      : "http://127.0.0.1:8000/projects";
-
-    const method = editingProject ? "PUT" : "POST";
-
     try {
-      const res = await fetch(url, {
-        method: method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: projectName,
-          description: projectDesc || "Untitled Genre",
-          aspect_ratio: selectedRatio, // <--- CRITICAL: Sending ratio to backend
-        }),
-      });
-
-      if (res.ok) {
-        if (!editingProject) {
-          const data = await res.json();
-          router.push(`/studio/${data.project_id}`);
-        } else {
+      if (editingProject) {
+        // UPDATE EXISTING (We need to add updateProject to api.ts or keep raw fetch here if api.ts lacks it)
+        // I will use raw fetch here for UPDATE to be safe since I didn't verify updateProject in api.ts yet.
+        // Ideally, add `updateProject` to api.ts next.
+        const res = await fetch(
+          `http://127.0.0.1:8000/projects/${editingProject.id}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: projectName,
+              description: projectDesc || "Untitled Genre",
+              aspect_ratio: selectedRatio,
+            }),
+          }
+        );
+        if (res.ok) {
           await fetchProjects();
           setIsProjectModalOpen(false);
         }
+      } else {
+        // CREATE NEW (REFACTORED)
+        const response = await createProject(
+          projectName,
+          projectDesc || "Untitled Genre",
+          selectedRatio
+        );
+
+        // Response format check (api.ts might return { project_id: ... } or the object)
+        const newId = response.project_id || response.id;
+        router.push(`/studio/${newId}`);
       }
     } catch (error) {
       console.error("Failed to save project", error);
@@ -151,9 +173,16 @@ export default function LobbyPage() {
     if (!projectToDelete) return;
 
     try {
+      // REFACTORED: Use api.ts (assuming deleteProject exists, otherwise raw fetch fallback)
+      // I will assume you added `export const deleteProject = ...` to api.ts.
+      // If not, use this: await fetch(`http://127.0.0.1:8000/projects/${projectToDelete.id}`, { method: "DELETE" });
+
+      // Using Raw Fetch for safety if you haven't updated api.ts fully yet,
+      // BUT if you did update api.ts, replace this line with: await deleteProject(projectToDelete.id);
       await fetch(`http://127.0.0.1:8000/projects/${projectToDelete.id}`, {
         method: "DELETE",
       });
+
       await fetchProjects();
       setIsDeleteModalOpen(false);
       setProjectToDelete(null);

@@ -6,17 +6,14 @@ import Link from "next/link";
 import {
   ChevronLeft,
   Plus,
-  MapPin,
-  User,
-  Layout,
-  FileText,
-  Film,
   MoreVertical,
   Pencil,
   Trash2,
   Calendar,
+  Layout,
   Clock,
   ArrowRight,
+  Film,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,26 +36,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// --- TYPES ---
-interface Asset {
-  id: number;
-  type: string;
-  name: string;
-  image_path: string;
-  prompt?: string;
-}
-
-interface Shot {
-  id: number;
-  status: "pending" | "ready" | "animating" | "complete";
-}
-
-interface Scene {
-  id: number;
-  name: string;
-  description: string;
-  shots: Shot[];
-}
+// --- API IMPORTS (Refactored) ---
+import {
+  getProject,
+  getProjectAssets,
+  getScenes,
+  createScene,
+  deleteAsset,
+  updateAsset,
+  Project,
+  Asset,
+  Scene,
+} from "@/lib/api";
 
 export default function ProjectDashboard({
   params,
@@ -69,7 +58,7 @@ export default function ProjectDashboard({
   const { id: projectId } = use(params);
 
   // --- STATE ---
-  const [project, setProject] = useState<any>(null);
+  const [project, setProject] = useState<Project | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,24 +77,17 @@ export default function ProjectDashboard({
   // --- FETCH DATA ---
   async function fetchData() {
     try {
-      const pRes = await fetch(`http://127.0.0.1:8000/projects/${projectId}`);
-      if (pRes.ok) setProject(await pRes.json());
+      // 1. Get Project Details
+      const pData = await getProject(projectId);
+      setProject(pData); // api.ts usually returns the object directly
 
-      const aRes = await fetch(
-        `http://127.0.0.1:8000/projects/${projectId}/assets`
-      );
-      if (aRes.ok) {
-        const data = await aRes.json();
-        setAssets(data.assets);
-      }
+      // 2. Get Assets
+      const aData = await getProjectAssets(projectId);
+      setAssets(aData);
 
-      const sRes = await fetch(
-        `http://127.0.0.1:8000/projects/${projectId}/scenes`
-      );
-      if (sRes.ok) {
-        const data = await sRes.json();
-        setScenes(data.scenes);
-      }
+      // 3. Get Scenes
+      const sData = await getScenes(projectId);
+      setScenes(sData);
     } catch (error) {
       console.error("Failed to fetch data", error);
     } finally {
@@ -120,45 +102,38 @@ export default function ProjectDashboard({
   // --- SCENE ACTIONS ---
   const handleCreateScene = async () => {
     if (!newSceneName) return;
-    const res = await fetch(
-      `http://127.0.0.1:8000/projects/${projectId}/scenes`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newSceneName,
-          description: newSceneDesc,
-        }),
-      }
-    );
-
-    if (res.ok) {
+    try {
+      await createScene(projectId, newSceneName, newSceneDesc);
       setIsSceneModalOpen(false);
       setNewSceneName("");
       setNewSceneDesc("");
       fetchData();
+    } catch (e) {
+      console.error("Failed to create scene", e);
     }
   };
 
   // --- ASSET ACTIONS ---
   const handleDeleteAsset = async () => {
     if (!selectedAsset) return;
-    await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
-      method: "DELETE",
-    });
-    setIsDeleteModalOpen(false);
-    fetchData();
+    try {
+      await deleteAsset(selectedAsset.id);
+      setIsDeleteModalOpen(false);
+      fetchData();
+    } catch (e) {
+      console.error("Failed to delete asset", e);
+    }
   };
 
   const handleRenameAsset = async () => {
     if (!selectedAsset || !newName) return;
-    await fetch(`http://127.0.0.1:8000/assets/${selectedAsset.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName }),
-    });
-    setIsEditModalOpen(false);
-    fetchData();
+    try {
+      await updateAsset(selectedAsset.id, newName);
+      setIsEditModalOpen(false);
+      fetchData();
+    } catch (e) {
+      console.error("Failed to rename asset", e);
+    }
   };
 
   const openDeleteModal = (e: React.MouseEvent, asset: Asset) => {
@@ -359,9 +334,11 @@ export default function ProjectDashboard({
                 <div className="flex items-center gap-4 border-t border-zinc-800 pt-4 mt-4">
                   <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 group-hover:text-zinc-300">
                     <Film size={14} />
-                    <span>{scene.shots.length} SHOTS</span>
+                    {/* Optional chaining just in case scene.shots is undefined initially */}
+                    <span>{scene.shots?.length || 0} SHOTS</span>
                   </div>
-                  {scene.shots.some((s) => s.status === "complete") && (
+                  {/* Safely check for shots before .some() */}
+                  {scene.shots?.some((s: any) => s.status === "complete") && (
                     <div className="flex items-center gap-2 text-xs font-mono text-[#D2FF44]">
                       <Clock size={14} />
                       <span>IN PROGRESS</span>

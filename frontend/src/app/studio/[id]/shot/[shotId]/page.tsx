@@ -21,10 +21,10 @@ import {
   ArrowRight,
   AlertTriangle, // <--- NEW IMPORT
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/app/studio/components/ui/button";
+import { Input } from "@/app/studio/components/ui/input";
+import { Textarea } from "@/app/studio/components/ui/textarea";
+import { Label } from "@/app/studio/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -33,7 +33,7 @@ import {
   SelectValue,
   SelectGroup,
   SelectLabel,
-} from "@/components/ui/select";
+} from "@/app/studio/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/components/ui/dialog";
+} from "@/app/studio/components/ui/dialog";
 
 // --- TYPES ---
 interface Take {

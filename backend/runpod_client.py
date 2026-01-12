@@ -7,8 +7,8 @@ import urllib.parse
 import os
 
 # CONFIGURATION
-# RUNPOD_URL = "http://127.0.0.1:8188" 
-RUNPOD_URL = "https://nqkx7k8pdp93jj-8188.proxy.runpod.net" 
+RUNPOD_URL = "http://127.0.0.1:8188" 
+# RUNPOD_URL = "https://nqkx7k8pdp93jj-8188.proxy.runpod.net" 
 WORKFLOW_FILE = "flux_dev_t5fp16.json"
 
 HEADERS = {

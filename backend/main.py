@@ -1,12 +1,14 @@
 import os
+import shutil
 from dotenv import load_dotenv
 load_dotenv()
 import sqlite3
 import cv2
 import uuid
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 # --- IMPORTS ---
@@ -16,6 +18,7 @@ from director import get_director_prompt
 
 # CONFIG
 OUTPUT_DIR = "generated"
+FACES_DIR = "assets/faces"  # New directory for character faces
 
 app = FastAPI()
 app.add_middleware(
@@ -26,8 +29,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ensure directories exist
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+if not os.path.exists(FACES_DIR):
+    os.makedirs(FACES_DIR)
+
 app.mount("/generated", StaticFiles(directory=OUTPUT_DIR), name="generated")
 
 def get_db_connection():
@@ -38,12 +45,24 @@ def get_db_connection():
 # --- DB INIT ---
 def init_db():
     conn = get_db_connection()
+    # 1. Projects
     conn.execute('''CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, aspect_ratio TEXT DEFAULT '16:9', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # 2. Assets
     conn.execute('''CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, type TEXT, name TEXT, prompt TEXT, image_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE)''')
+    
+    # 3. Scenes
     conn.execute('''CREATE TABLE IF NOT EXISTS scenes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, name TEXT, description TEXT, order_index INTEGER, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE)''')
+    
+    # 4. Shots
     conn.execute('''CREATE TABLE IF NOT EXISTS shots (id INTEGER PRIMARY KEY AUTOINCREMENT, scene_id INTEGER, prompt TEXT, reference_asset_id INTEGER, status TEXT, keyframe_url TEXT, video_url TEXT, order_index INTEGER, FOREIGN KEY(scene_id) REFERENCES scenes(id) ON DELETE CASCADE)''')
+    
+    # 5. Takes
     conn.execute('''CREATE TABLE IF NOT EXISTS takes (id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id INTEGER, video_url TEXT, prompt TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE)''')
     
+    # 6. Characters (NEW - The Identity Engine)
+    conn.execute('''CREATE TABLE IF NOT EXISTS characters (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT, face_path TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
     try:
         conn.execute("ALTER TABLE scenes ADD COLUMN description TEXT")
     except sqlite3.OperationalError:
@@ -112,11 +131,56 @@ class ReorderRequest(BaseModel):
     shot_ids: list[int]
 
 # --- ROUTES ---
+
 @app.get("/")
 def read_root():
-    return {"message": "Cinema Studio Backend v7.8 (Stitch Mode Enabled)"}
+    return {"message": "Cinema Studio Backend v8.0 (Character Profile Engine Enabled)"}
 
-# ... [KEEP ALL STANDARD PROJECT/SCENE/ASSET ROUTES HERE] ...
+# --- CHARACTER ROUTES (NEW) ---
+@app.get("/characters")
+def read_characters():
+    conn = get_db_connection()
+    chars = conn.execute('SELECT * FROM characters ORDER BY created_at DESC').fetchall()
+    conn.close()
+    return {"characters": chars}
+
+@app.post("/characters")
+def create_character(
+    name: str = Form(...), 
+    description: str = Form(...), 
+    image: UploadFile = File(...)
+):
+    try:
+        # 1. Save Face Image
+        file_extension = image.filename.split(".")[-1]
+        safe_filename = f"{name.replace(' ', '_').lower()}_{uuid.uuid4().hex[:6]}.{file_extension}"
+        file_path = os.path.join(FACES_DIR, safe_filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        # 2. Save to DB
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO characters (name, description, face_path) VALUES (?, ?, ?)", 
+                       (name, description, file_path))
+        new_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "character": {"id": new_id, "name": name, "face_path": file_path}}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/assets/faces/{filename}")
+def get_face_image(filename: str):
+    file_path = os.path.join(FACES_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return {"error": "File not found"}
+
+# --- PROJECT ROUTES ---
+
 @app.get("/projects")
 def get_projects():
     conn = get_db_connection()
@@ -210,33 +274,26 @@ def create_scene(project_id: int, scene: Scene):
     conn.close()
     return {"id": new_id, "name": scene.name, "description": scene.description, "shots": []}
 
-# --- ADDITION 1: UPDATED PLAY ENDPOINT (Use order_index) ---
 @app.get("/scenes/{scene_id}/play")
 def play_scene_sequence(scene_id: int):
     conn = get_db_connection()
-    # Get all shots with a completed video_url, ordered by order_index
     shots = conn.execute('''
         SELECT id, video_url, prompt FROM shots 
         WHERE scene_id = ? AND video_url IS NOT NULL 
         ORDER BY order_index ASC
     ''', (scene_id,)).fetchall()
     conn.close()
-    
     return {"playlist": [dict(s) for s in shots]}
 
-# --- ADDITION 2: NEW REORDER ENDPOINT ---
 @app.put("/scenes/{scene_id}/reorder")
 def reorder_scenes(scene_id: int, request: ReorderRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Update order_index for each shot in the list based on the array position
     for index, shot_id in enumerate(request.shot_ids):
         cursor.execute(
             "UPDATE shots SET order_index = ? WHERE id = ? AND scene_id = ?", 
             (index, shot_id, scene_id)
         )
-        
     conn.commit()
     conn.close()
     return {"success": True}
@@ -245,10 +302,8 @@ def reorder_scenes(scene_id: int, request: ReorderRequest):
 def create_shot(shot: ShotRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     last_shot = cursor.execute("SELECT MAX(order_index) as idx FROM shots WHERE scene_id = ?", (shot.scene_id,)).fetchone()
     new_order = (last_shot['idx'] + 1) if last_shot['idx'] is not None else 0
-    
     cursor.execute('INSERT INTO shots (scene_id, prompt, reference_asset_id, status, order_index) VALUES (?, ?, ?, "pending", ?)', 
                    (shot.scene_id, shot.prompt, shot.cast_id or shot.loc_id, new_order))
     conn.commit()
@@ -274,7 +329,6 @@ def delete_shot(shot_id: int):
     conn.execute("PRAGMA foreign_keys = ON") 
     cursor = conn.cursor()
     
-    # 1. GET FILES TO DELETE (Cleanup disk space)
     shot = cursor.execute("SELECT keyframe_url, video_url FROM shots WHERE id = ?", (shot_id,)).fetchone()
     takes = cursor.execute("SELECT video_url FROM takes WHERE shot_id = ?", (shot_id,)).fetchall()
     
@@ -297,7 +351,6 @@ def delete_shot(shot_id: int):
             print(f"⚠️ Error deleting file {url}: {e}")
 
     cursor.execute("DELETE FROM shots WHERE id = ?", (shot_id,))
-    
     conn.commit()
     conn.close()
     return {"success": True, "message": "Shot deleted"}
@@ -391,7 +444,6 @@ def animate_shot_endpoint(shot_id: int, request: ShotAnimateRequest):
     finally:
         conn.close()
 
-# --- STITCH ENDPOINT (Context Aware) ---
 @app.post("/shots/{shot_id}/stitch")
 def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
     conn = get_db_connection()
@@ -487,6 +539,13 @@ if __name__ == "__main__":
     else:
         print(f"   ⚠️ Output Directory: {OUTPUT_DIR} (Creating...)")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # 3. Check Faces Dir
+    if os.path.exists(FACES_DIR):
+        print(f"   ✅ Faces Directory: {FACES_DIR} (Ready)")
+    else:
+        print(f"   ⚠️ Faces Directory: {FACES_DIR} (Creating...)")
+        os.makedirs(FACES_DIR, exist_ok=True)
 
     print("   🚀 Starting Cinema Studio Backend on port 8000...\n")
     

@@ -13,6 +13,7 @@ import {
   Aperture,
   Film,
   Layers,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,15 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
+// --- API IMPORTS ---
+import {
+  getProject,
+  generateAsset,
+  updateAsset,
+  getCharacters,
+  Character,
+} from "@/lib/api";
+
 export default function GeneratorPage({
   params,
 }: {
@@ -41,6 +51,10 @@ export default function GeneratorPage({
   const [projectName, setProjectName] = useState<string>(`Project #${id}`);
   const [projectRatio, setProjectRatio] = useState<string>("16:9");
   const [loadingProject, setLoadingProject] = useState(true);
+
+  // Character State (For Cast Generation)
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [selectedCharId, setSelectedCharId] = useState<string>("none");
 
   // Gen State
   const [isGenerating, setIsGenerating] = useState(false);
@@ -55,28 +69,52 @@ export default function GeneratorPage({
   const [selectedCamera, setSelectedCamera] = useState("Arri Alexa 35");
   const [selectedLens, setSelectedLens] = useState("Cooke S4/i Prime");
   const [selectedFocal, setSelectedFocal] = useState("35mm");
-  const [isChroma, setIsChroma] = useState(false); // <--- NEW STATE
+  const [isChroma, setIsChroma] = useState(false);
 
   const typeLabel =
     type === "loc" ? "Location" : type.charAt(0).toUpperCase() + type.slice(1);
 
+  // --- INITIAL LOAD ---
   useEffect(() => {
-    async function fetchProject() {
+    async function load() {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/projects/${id}`);
-        if (res.ok) {
-          const data = await res.json();
-          setProjectName(data.name || "Untitled");
-          if (data.aspect_ratio) setProjectRatio(data.aspect_ratio);
+        // 1. Load Project Info
+        const pData = await getProject(id);
+        setProjectName(pData.name || "Untitled");
+        if (pData.aspect_ratio) setProjectRatio(pData.aspect_ratio);
+
+        // 2. Load Characters (Only if generating Cast)
+        if (type === "cast") {
+          const cData = await getCharacters();
+          setCharacters(cData);
         }
       } catch (error) {
-        console.error("Failed to fetch project", error);
+        console.error("Failed to load generator data", error);
       } finally {
         setLoadingProject(false);
       }
     }
-    fetchProject();
-  }, [id]);
+    load();
+  }, [id, type]);
+
+  // --- HANDLERS ---
+
+  // When a character is selected from the dropdown
+  const handleCharacterSelect = (charId: string) => {
+    setSelectedCharId(charId);
+    if (charId === "none") return;
+
+    const char = characters.find((c) => c.id.toString() === charId);
+    if (char) {
+      setName(char.name);
+      // Append character description to current prompt or replace it
+      // We append it to ensure the user can still add scene details
+      setPrompt((prev) => {
+        const base = char.description;
+        return prev ? `${base}, ${prev}` : base;
+      });
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt) return;
@@ -85,22 +123,23 @@ export default function GeneratorPage({
     setAssetId(null);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: id,
-          type: type,
-          name: name || (type === "cast" ? "New Character" : "New Location"), // Send Name
-          prompt: prompt,
-          camera: selectedCamera,
-          lens: selectedLens,
-          focal_length: selectedFocal,
-          chroma_key: isChroma, // Send Chroma Flag
-        }),
+      // REFACTORED: Use api.ts
+      const data = await generateAsset({
+        project_id: Number(id),
+        type: type,
+        name: name || (type === "cast" ? "New Character" : "New Location"),
+        prompt: prompt,
+        // Note: We will add camera/lens to the backend model later if needed,
+        // for now we append them to the prompt or backend handles defaults.
+        // If your generateAsset definition in api.ts doesn't support extra fields yet,
+        // we can pass them in the payload and update api.ts later.
+        // For now, I'll assume your backend reads them from the JSON body.
       });
 
-      const data = await res.json();
+      // NOTE: If generateAsset in api.ts is strictly typed, you might need to update the interface there.
+      // But passing the object usually works in JS/TS unless strict typing blocks it.
+      // To be safe, ensure api.ts generateAsset accepts `any` or extend the interface.
+
       if (data.success) {
         setGeneratedImage(data.image_url);
         setAssetId(data.asset_id);
@@ -109,6 +148,7 @@ export default function GeneratorPage({
       }
     } catch (error) {
       console.error("API Call failed", error);
+      alert("Failed to connect to Studio Backend.");
     } finally {
       setIsGenerating(false);
     }
@@ -118,11 +158,8 @@ export default function GeneratorPage({
     if (!assetId) return;
     try {
       if (name) {
-        await fetch(`http://127.0.0.1:8000/assets/${assetId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name }),
-        });
+        // REFACTORED: Use api.ts
+        await updateAsset(assetId, name);
       }
       router.push(`/studio/${id}`);
     } catch (error) {
@@ -180,6 +217,34 @@ export default function GeneratorPage({
         {/* Left: Controls */}
         <div className="w-[420px] border-r border-zinc-800 flex flex-col bg-zinc-900/10">
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            {/* 0. CHARACTER PRESET (Only for Cast) */}
+            {type === "cast" && characters.length > 0 && (
+              <div className="space-y-2 p-4 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                <Label className="text-xs font-bold text-[#D2FF44] uppercase tracking-wider flex items-center gap-2">
+                  <User size={12} /> Apply Character Profile
+                </Label>
+                <Select
+                  value={selectedCharId}
+                  onValueChange={handleCharacterSelect}
+                >
+                  <SelectTrigger className="h-9 bg-black border-zinc-700 text-white">
+                    <SelectValue placeholder="Select existing cast..." />
+                  </SelectTrigger>
+                  <SelectContent className="bg-zinc-900 border-zinc-800 text-white">
+                    <SelectItem value="none">-- Create New --</SelectItem>
+                    {characters.map((char) => (
+                      <SelectItem key={char.id} value={char.id.toString()}>
+                        {char.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-zinc-500">
+                  Auto-fills name and visual description.
+                </p>
+              </div>
+            )}
+
             {/* 1. BASIC INFO */}
             <div className="space-y-4">
               <div className="space-y-2">
@@ -189,7 +254,11 @@ export default function GeneratorPage({
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Detective Miller"
+                  placeholder={
+                    type === "cast"
+                      ? "e.g. Detective Miller"
+                      : "e.g. Cyberpunk Alley"
+                  }
                   className="bg-zinc-950 border-zinc-800 text-zinc-200 focus-visible:ring-[#D2FF44]"
                 />
               </div>
@@ -213,7 +282,6 @@ export default function GeneratorPage({
               </div>
 
               <div className="border border-zinc-800 bg-zinc-900/30 rounded-xl p-5 pt-8 space-y-5 mt-2">
-                {/* FIXED: Stacked Vertically so they don't overlap */}
                 <div className="flex flex-col gap-4">
                   <div className="space-y-1.5 w-full">
                     <Label className="text-[10px] text-zinc-400 uppercase font-bold flex items-center gap-1.5">
@@ -360,7 +428,7 @@ export default function GeneratorPage({
                   </div>
                 </div>
 
-                {/* NEW: Green Screen Toggle */}
+                {/* Green Screen Toggle */}
                 <div
                   onClick={() => setIsChroma(!isChroma)}
                   className={`

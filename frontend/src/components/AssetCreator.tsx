@@ -13,19 +13,23 @@ import {
   Box,
   Maximize,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/app/studio/components/ui/button";
+import { Input } from "@/app/studio/components/ui/input";
+import { Label } from "@/app/studio/components/ui/label";
+import { Textarea } from "@/app/studio/components/ui/textarea";
+import { Badge } from "@/app/studio/components/ui/badge";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+} from "@/app/studio/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/app/studio/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 // Reusing your constants

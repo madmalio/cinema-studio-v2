@@ -19,12 +19,17 @@ import {
   X,
   GripVertical,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/app/studio/components/ui/button";
+import { ScrollArea } from "@/app/studio/components/ui/scroll-area";
+import { Textarea } from "@/app/studio/components/ui/textarea";
+import { Label } from "@/app/studio/components/ui/label";
+import { Badge } from "@/app/studio/components/ui/badge";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/app/studio/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +37,7 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from "@/components/ui/dialog";
+} from "@/app/studio/components/ui/dialog";
 
 // --- TYPES ---
 interface Asset {
