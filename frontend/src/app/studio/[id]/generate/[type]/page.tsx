@@ -47,6 +47,12 @@ export default function GeneratorPage({
   const router = useRouter();
   const { id, type } = use(params);
 
+  // --- DYNAMIC ROUTING CONFIG ---
+  // If we are generating 'cast', go back to the Character List. Otherwise, Studio Dashboard.
+  const backLink =
+    type === "cast" ? `/studio/${id}/characters` : `/studio/${id}`;
+  const backLabel = type === "cast" ? "Back to Cast" : "Cancel";
+
   // Data State
   const [projectName, setProjectName] = useState<string>(`Project #${id}`);
   const [projectRatio, setProjectRatio] = useState<string>("16:9");
@@ -108,7 +114,6 @@ export default function GeneratorPage({
     if (char) {
       setName(char.name);
       // Append character description to current prompt or replace it
-      // We append it to ensure the user can still add scene details
       setPrompt((prev) => {
         const base = char.description;
         return prev ? `${base}, ${prev}` : base;
@@ -123,22 +128,12 @@ export default function GeneratorPage({
     setAssetId(null);
 
     try {
-      // REFACTORED: Use api.ts
       const data = await generateAsset({
         project_id: Number(id),
         type: type,
         name: name || (type === "cast" ? "New Character" : "New Location"),
         prompt: prompt,
-        // Note: We will add camera/lens to the backend model later if needed,
-        // for now we append them to the prompt or backend handles defaults.
-        // If your generateAsset definition in api.ts doesn't support extra fields yet,
-        // we can pass them in the payload and update api.ts later.
-        // For now, I'll assume your backend reads them from the JSON body.
       });
-
-      // NOTE: If generateAsset in api.ts is strictly typed, you might need to update the interface there.
-      // But passing the object usually works in JS/TS unless strict typing blocks it.
-      // To be safe, ensure api.ts generateAsset accepts `any` or extend the interface.
 
       if (data.success) {
         setGeneratedImage(data.image_url);
@@ -158,10 +153,10 @@ export default function GeneratorPage({
     if (!assetId) return;
     try {
       if (name) {
-        // REFACTORED: Use api.ts
         await updateAsset(assetId, name);
       }
-      router.push(`/studio/${id}`);
+      // UPDATED: Navigate back to the correct list (Cast vs Studio)
+      router.push(backLink);
     } catch (error) {
       console.error("Failed to save", error);
     }
@@ -172,8 +167,9 @@ export default function GeneratorPage({
       {/* Header */}
       <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm">
         <div className="flex items-center gap-4">
+          {/* UPDATED BACK ARROW LINK */}
           <Link
-            href={`/studio/${id}`}
+            href={backLink}
             className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors"
           >
             <ArrowLeft size={20} />
@@ -196,12 +192,13 @@ export default function GeneratorPage({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* UPDATED CANCEL BUTTON */}
           <Button
             variant="ghost"
-            onClick={() => router.push(`/studio/${id}`)}
+            onClick={() => router.push(backLink)}
             className="text-zinc-400 hover:text-white hover:bg-zinc-800"
           >
-            Cancel
+            {backLabel}
           </Button>
           <Button
             onClick={handleSave}

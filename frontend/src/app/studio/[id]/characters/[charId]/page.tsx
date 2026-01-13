@@ -10,7 +10,6 @@ import {
   Save,
   Loader2,
   Camera,
-  Aperture,
   Film,
   Layers,
   User,
@@ -18,6 +17,7 @@ import {
   Download,
   Share2,
   Copy,
+  Aperture,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,15 +34,8 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
-
 // --- API IMPORTS ---
-import {
-  getProject,
-  getProjectAssets,
-  generateAsset,
-  updateAsset,
-  Asset,
-} from "@/lib/api";
+import { getProjectAssets, generateAsset, Asset } from "@/lib/api";
 
 export default function CharacterProfilePage({
   params,
@@ -125,6 +118,7 @@ export default function CharacterProfilePage({
 
   const handleSaveScene = async () => {
     alert("Scene saved to gallery! (Placeholder)");
+    // In a real flow, the asset is already saved by generateAsset.
     setGeneratedImage(null);
     setScenePrompt("");
     setSceneName("");
@@ -136,6 +130,7 @@ export default function CharacterProfilePage({
         <Loader2 className="animate-spin mr-2" /> Loading Profile...
       </div>
     );
+
   if (!character)
     return (
       <div className="h-screen bg-black text-white p-10">
@@ -178,33 +173,27 @@ export default function CharacterProfilePage({
 
       {/* WORKSPACE */}
       <div className="flex-1 flex overflow-hidden">
-        {/* COL 1: IDENTITY (Source of Truth) */}
-        <div className="w-[300px] border-r border-zinc-800 bg-zinc-900/20 flex flex-col">
+        {/* COL 1: IDENTITY (Source of Truth - BIG IMAGE) */}
+        <div className="w-[350px] border-r border-zinc-800 bg-zinc-900/20 flex flex-col flex-shrink-0">
           <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
-            {/* Hero Image (Smaller as requested) */}
-            <div className="space-y-4">
-              <Label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                Source Identity
-              </Label>
-              <div className="bg-black border border-zinc-800 rounded-lg p-2 flex gap-3 items-center">
-                <div className="w-16 h-16 rounded overflow-hidden flex-shrink-0 border border-zinc-700">
-                  <img
-                    src={character.image_path}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <Badge className="bg-[#D2FF44] text-black hover:bg-[#D2FF44] text-[9px] h-4 mb-1">
-                    HERO
+            {/* BIG HERO IMAGE */}
+            <div className="relative aspect-[3/4] rounded-xl overflow-hidden border-2 border-zinc-800 shadow-2xl mb-6 group">
+              <img
+                src={character.image_path}
+                className="w-full h-full object-cover"
+                alt="Hero Reference"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-100 flex items-end p-4">
+                <div>
+                  <Badge className="bg-[#D2FF44] text-black hover:bg-[#D2FF44] mb-2 font-bold">
+                    HERO REFERENCE
                   </Badge>
-                  <p className="text-[10px] text-zinc-400 truncate font-mono">
-                    {character.name}
+                  <p className="text-[10px] text-zinc-400">
+                    Source DNA for generation.
                   </p>
                 </div>
               </div>
             </div>
-
-            <div className="w-full h-px bg-zinc-800 my-6" />
 
             {/* Base Data */}
             <div className="space-y-6">
@@ -227,8 +216,8 @@ export default function CharacterProfilePage({
           </div>
         </div>
 
-        {/* COL 2: GENERATOR (Center) */}
-        <div className="w-[500px] border-r border-zinc-800 bg-zinc-900/10 flex flex-col">
+        {/* COL 2: GENERATOR (Center - 400px wide) */}
+        <div className="w-[400px] border-r border-zinc-800 bg-zinc-900/10 flex flex-col flex-shrink-0">
           <div className="p-6 border-b border-zinc-800 bg-zinc-900/30 shrink-0">
             <h2 className="font-bold text-sm flex items-center gap-2 text-zinc-200">
               <Wand2 className="text-[#D2FF44]" size={16} /> Scene Generator
@@ -238,212 +227,222 @@ export default function CharacterProfilePage({
             </p>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-            {/* Scene Name */}
-            <div className="space-y-2">
-              <Label className="text-xs font-bold text-zinc-400 uppercase">
-                Scene Name
-              </Label>
-              <Input
-                value={sceneName}
-                onChange={(e) => setSceneName(e.target.value)}
-                placeholder={`${character.name} - Scene 001`}
-                className="bg-zinc-950 border-zinc-800 text-white focus-visible:ring-[#D2FF44]"
-              />
-            </div>
-
-            {/* Prompt Input */}
-            <div className="space-y-2">
-              <Label className="text-xs font-bold text-zinc-400 uppercase">
-                Context & Action
-              </Label>
-              <Textarea
-                value={scenePrompt}
-                onChange={(e) => setScenePrompt(e.target.value)}
-                className="bg-zinc-950 border-zinc-800 min-h-[120px] text-base focus-visible:ring-[#D2FF44]"
-                placeholder={`e.g. ${character.name} sitting in a 1950s diner at night, drinking coffee, looking worried, rain on window...`}
-              />
-            </div>
-
-            {/* Tech Specs (The Full Kit) */}
-            <div className="bg-zinc-900/30 border border-zinc-800 rounded-lg p-5 space-y-5">
-              <div className="flex items-center gap-2">
-                <Camera size={12} className="text-[#D2FF44]" />
-                <Label className="text-[10px] font-bold text-[#D2FF44] uppercase">
-                  Cinematography
-                </Label>
-              </div>
-
-              {/* Camera Body */}
-              <div className="space-y-1.5">
-                <Label className="text-[10px] text-zinc-500 uppercase font-bold">
-                  Camera Body
-                </Label>
-                <Select
-                  value={selectedCamera}
-                  onValueChange={setSelectedCamera}
-                >
-                  <SelectTrigger className="h-9 bg-zinc-950 border-zinc-800 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
-                    <SelectGroup>
-                      <SelectLabel className="text-[10px] text-zinc-500">
-                        Digital Cinema
-                      </SelectLabel>
-                      <SelectItem value="Arri Alexa 65">
-                        Arri Alexa 65
-                      </SelectItem>
-                      <SelectItem value="Arri Alexa 35">
-                        Arri Alexa 35
-                      </SelectItem>
-                      <SelectItem value="RED V-Raptor XL">
-                        RED V-Raptor XL
-                      </SelectItem>
-                      <SelectItem value="Sony Venice 2">
-                        Sony Venice 2
-                      </SelectItem>
-                      <SelectItem value="Panavision DXL2">
-                        Panavision DXL2
-                      </SelectItem>
-                    </SelectGroup>
-                    <SelectGroup>
-                      <SelectLabel className="text-[10px] text-zinc-500 mt-2">
-                        Film Stock
-                      </SelectLabel>
-                      <SelectItem value="IMAX 70mm Film">
-                        IMAX 15/70mm Film
-                      </SelectItem>
-                      <SelectItem value="Kodak Vision3 500T">
-                        Kodak Vision3 500T
-                      </SelectItem>
-                      <SelectItem value="Kodak Portra 400">
-                        Kodak Portra 400
-                      </SelectItem>
-                      <SelectItem value="16mm Bolex">
-                        16mm Grainy Film
-                      </SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Lenses */}
-              <div className="space-y-1.5">
-                <Label className="text-[10px] text-zinc-500 uppercase font-bold">
-                  Lens Set
-                </Label>
-                <Select value={selectedLens} onValueChange={setSelectedLens}>
-                  <SelectTrigger className="h-9 bg-zinc-950 border-zinc-800 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
-                    <SelectGroup>
-                      <SelectLabel className="text-[10px] text-zinc-500">
-                        Anamorphic
-                      </SelectLabel>
-                      <SelectItem value="Panavision C-Series">
-                        Panavision C-Series
-                      </SelectItem>
-                      <SelectItem value="Cooke Anamorphic /i">
-                        Cooke Anamorphic /i
-                      </SelectItem>
-                      <SelectItem value="Atlas Orion">Atlas Orion</SelectItem>
-                    </SelectGroup>
-                    <SelectGroup>
-                      <SelectLabel className="text-[10px] text-zinc-500 mt-2">
-                        Spherical Primes
-                      </SelectLabel>
-                      <SelectItem value="Cooke S4/i Prime">
-                        Cooke S4/i Prime
-                      </SelectItem>
-                      <SelectItem value="Arri/Zeiss Master Prime">
-                        Arri/Zeiss Master Prime
-                      </SelectItem>
-                      <SelectItem value="Angenieux Optimo">
-                        Angenieux Optimo Zoom
-                      </SelectItem>
-                      <SelectItem value="Canon K35 Vintage">
-                        Canon K35 Vintage
-                      </SelectItem>
-                      <SelectItem value="Leica Summilux-C">
-                        Leica Summilux-C
-                      </SelectItem>
-                    </SelectGroup>
-                    <SelectGroup>
-                      <SelectLabel className="text-[10px] text-zinc-500 mt-2">
-                        Vintage
-                      </SelectLabel>
-                      <SelectItem value="Petzval 85 Art">
-                        Petzval 85 Art
-                      </SelectItem>
-                      <SelectItem value="16mm Bolex">
-                        16mm Vintage Look
-                      </SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Focal Length Buttons */}
+          <ScrollArea className="flex-1 p-6">
+            <div className="space-y-6">
+              {/* Scene Name */}
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <Label className="text-[10px] text-zinc-500 uppercase font-bold">
-                    Focal Length
-                  </Label>
-                  <span className="text-[10px] text-[#D2FF44] font-mono">
-                    {selectedFocal}
-                  </span>
-                </div>
-                <div className="grid grid-cols-5 gap-2">
-                  {["14mm", "24mm", "35mm", "50mm", "85mm"].map((focal) => (
-                    <button
-                      key={focal}
-                      onClick={() => setSelectedFocal(focal)}
-                      className={`text-[10px] h-7 rounded border transition-all font-bold ${
-                        selectedFocal === focal
-                          ? "bg-[#D2FF44] text-black border-[#D2FF44]"
-                          : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-600"
-                      }`}
-                    >
-                      {focal}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Green Screen */}
-              <div
-                onClick={() => setIsChroma(!isChroma)}
-                className={`border rounded p-2 cursor-pointer transition-all flex items-center justify-between group ${
-                  isChroma
-                    ? "bg-[#D2FF44]/10 border-[#D2FF44]"
-                    : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Layers
-                    size={14}
-                    className={isChroma ? "text-[#D2FF44]" : "text-zinc-500"}
-                  />
-                  <span
-                    className={`text-[10px] font-bold ${
-                      isChroma ? "text-[#D2FF44]" : "text-zinc-500"
-                    }`}
-                  >
-                    Green Screen Mode
-                  </span>
-                </div>
-                <div
-                  className={`w-2 h-2 rounded-full border ${
-                    isChroma
-                      ? "bg-[#D2FF44] border-[#D2FF44]"
-                      : "border-zinc-600"
-                  }`}
+                <Label className="text-xs font-bold text-zinc-400 uppercase">
+                  Scene Name
+                </Label>
+                <Input
+                  value={sceneName}
+                  onChange={(e) => setSceneName(e.target.value)}
+                  placeholder={`${character.name} - Scene 001`}
+                  className="bg-zinc-950 border-zinc-800 text-white focus-visible:ring-[#D2FF44]"
                 />
               </div>
+
+              {/* Prompt Input */}
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-zinc-400 uppercase">
+                  Context & Action
+                </Label>
+                <Textarea
+                  value={scenePrompt}
+                  onChange={(e) => setScenePrompt(e.target.value)}
+                  className="bg-zinc-950 border-zinc-800 min-h-[120px] text-base focus-visible:ring-[#D2FF44]"
+                  placeholder={`e.g. ${character.name} sitting in a 1950s diner at night, drinking coffee, looking worried, rain on window...`}
+                />
+              </div>
+
+              {/* CINEMATOGRAPHY SECTION (From Generator) */}
+              <div className="relative pt-2">
+                {/* Floating Badge */}
+                <div className="absolute -top-1 left-0 bg-[#D2FF44] text-black text-[10px] font-bold px-2 py-0.5 rounded-full z-10 flex items-center gap-1">
+                  <Camera size={10} /> CINEMATOGRAPHY
+                </div>
+
+                <div className="border border-zinc-800 bg-zinc-900/30 rounded-xl p-5 pt-8 space-y-5 mt-2">
+                  <div className="flex flex-col gap-4">
+                    {/* Camera Body */}
+                    <div className="space-y-1.5 w-full">
+                      <Label className="text-[10px] text-zinc-400 uppercase font-bold flex items-center gap-1.5">
+                        <Film size={12} /> Camera Body
+                      </Label>
+                      <Select
+                        value={selectedCamera}
+                        onValueChange={setSelectedCamera}
+                      >
+                        <SelectTrigger className="h-9 w-full bg-zinc-950 border-zinc-800 text-xs font-medium">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] text-zinc-500 uppercase">
+                              Digital Cinema
+                            </SelectLabel>
+                            <SelectItem value="Arri Alexa 65">
+                              Arri Alexa 65 (Large Format)
+                            </SelectItem>
+                            <SelectItem value="Arri Alexa 35">
+                              Arri Alexa 35 (Super 35)
+                            </SelectItem>
+                            <SelectItem value="RED V-Raptor XL">
+                              RED V-Raptor XL
+                            </SelectItem>
+                            <SelectItem value="Sony Venice 2">
+                              Sony Venice 2
+                            </SelectItem>
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                              Film Stock
+                            </SelectLabel>
+                            <SelectItem value="IMAX 70mm Film">
+                              IMAX 15/70mm Film
+                            </SelectItem>
+                            <SelectItem value="Kodak Vision3 500T">
+                              Kodak Vision3 500T
+                            </SelectItem>
+                            <SelectItem value="16mm Bolex">
+                              16mm Grainy Film
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Lens Set */}
+                    <div className="space-y-1.5 w-full">
+                      <Label className="text-[10px] text-zinc-400 uppercase font-bold flex items-center gap-1.5">
+                        <Aperture size={12} /> Lens Set
+                      </Label>
+                      <Select
+                        value={selectedLens}
+                        onValueChange={setSelectedLens}
+                      >
+                        <SelectTrigger className="h-9 w-full bg-zinc-950 border-zinc-800 text-xs font-medium">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-zinc-900 border-zinc-800 text-white max-h-[300px]">
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] text-zinc-500 uppercase">
+                              Anamorphic
+                            </SelectLabel>
+                            <SelectItem value="Panavision C-Series">
+                              Panavision C-Series
+                            </SelectItem>
+                            <SelectItem value="Cooke Anamorphic /i">
+                              Cooke Anamorphic /i
+                            </SelectItem>
+                            <SelectItem value="Atlas Orion">
+                              Atlas Orion
+                            </SelectItem>
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                              Spherical
+                            </SelectLabel>
+                            <SelectItem value="Cooke S4/i Prime">
+                              Cooke S4/i Prime
+                            </SelectItem>
+                            <SelectItem value="Arri/Zeiss Master Prime">
+                              Arri/Zeiss Master Prime
+                            </SelectItem>
+                            <SelectItem value="Leica Summilux-C">
+                              Leica Summilux-C
+                            </SelectItem>
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] text-zinc-500 uppercase mt-2">
+                              Vintage
+                            </SelectLabel>
+                            <SelectItem value="Petzval 85 Art">
+                              Lomo Petzval 85
+                            </SelectItem>
+                            <SelectItem value="Canon K35 Vintage">
+                              Canon K35 Vintage
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Focal Length Slider */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label className="text-[10px] text-zinc-400 uppercase font-bold">
+                        Focal Length
+                      </Label>
+                      <span className="text-[10px] text-[#D2FF44] font-mono">
+                        {selectedFocal}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2">
+                      {["14mm", "24mm", "35mm", "50mm", "85mm"].map((focal) => (
+                        <button
+                          key={focal}
+                          onClick={() => setSelectedFocal(focal)}
+                          className={`text-[10px] h-8 rounded border transition-all font-bold ${
+                            selectedFocal === focal
+                              ? "bg-[#D2FF44] text-black border-[#D2FF44]"
+                              : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-600"
+                          }`}
+                        >
+                          {focal}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Green Screen Toggle */}
+                  <div
+                    onClick={() => setIsChroma(!isChroma)}
+                    className={`
+                            mt-4 border rounded-lg p-3 cursor-pointer transition-all flex items-center justify-between group
+                            ${
+                              isChroma
+                                ? "bg-[#D2FF44]/10 border-[#D2FF44]"
+                                : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
+                            }
+                        `}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`p-1.5 rounded-full transition-colors ${
+                          isChroma
+                            ? "bg-[#D2FF44] text-black"
+                            : "bg-zinc-900 text-zinc-600"
+                        }`}
+                      >
+                        <Layers size={14} />
+                      </div>
+                      <div>
+                        <h3
+                          className={`text-xs font-bold transition-colors ${
+                            isChroma ? "text-[#D2FF44]" : "text-zinc-400"
+                          }`}
+                        >
+                          Green Screen Mode
+                        </h3>
+                        <p className="text-[9px] text-zinc-600">
+                          Generates clean chroma key background.
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
+                        isChroma
+                          ? "bg-[#D2FF44] border-[#D2FF44]"
+                          : "border-zinc-700"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          </ScrollArea>
 
           {/* Button (Anchored to Bottom) */}
           <div className="p-6 border-t border-zinc-800 bg-zinc-900/30 shrink-0">
