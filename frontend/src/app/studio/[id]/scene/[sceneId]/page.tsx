@@ -19,17 +19,12 @@ import {
   X,
   GripVertical,
 } from "lucide-react";
-import { Button } from "@/app/studio/components/ui/button";
-import { ScrollArea } from "@/app/studio/components/ui/scroll-area";
-import { Textarea } from "@/app/studio/components/ui/textarea";
-import { Label } from "@/app/studio/components/ui/label";
-import { Badge } from "@/app/studio/components/ui/badge";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/app/studio/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -37,7 +32,7 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from "@/app/studio/components/ui/dialog";
+} from "@/components/ui/dialog";
 
 // --- TYPES ---
 interface Asset {
@@ -91,7 +86,7 @@ export default function SceneBuilderPage({
 
   // DAILIES PLAYER STATE
   const [playlist, setPlaylist] = useState<{ video_url: string; id: number }[]>(
-    []
+    [],
   );
   const [currentPlayIndex, setCurrentPlayIndex] = useState(0);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
@@ -100,12 +95,12 @@ export default function SceneBuilderPage({
   async function fetchData() {
     try {
       const sRes = await fetch(
-        `http://127.0.0.1:8000/projects/${projectId}/scenes`
+        `http://127.0.0.1:8000/projects/${projectId}/scenes`,
       );
       if (sRes.ok) {
         const data = await sRes.json();
         const foundScene = data.scenes.find(
-          (s: Scene) => s.id.toString() === sceneId
+          (s: Scene) => s.id.toString() === sceneId,
         );
         if (foundScene) {
           setScene(foundScene);
@@ -114,7 +109,7 @@ export default function SceneBuilderPage({
       }
 
       const aRes = await fetch(
-        `http://127.0.0.1:8000/projects/${projectId}/assets`
+        `http://127.0.0.1:8000/projects/${projectId}/assets`,
       );
       if (aRes.ok) {
         const data = await aRes.json();

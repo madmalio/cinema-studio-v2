@@ -21,10 +21,10 @@ import {
   ArrowRight,
   AlertTriangle, // <--- NEW IMPORT
 } from "lucide-react";
-import { Button } from "@/app/studio/components/ui/button";
-import { Input } from "@/app/studio/components/ui/input";
-import { Textarea } from "@/app/studio/components/ui/textarea";
-import { Label } from "@/app/studio/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -33,7 +33,7 @@ import {
   SelectValue,
   SelectGroup,
   SelectLabel,
-} from "@/app/studio/components/ui/select";
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/app/studio/components/ui/dialog";
+} from "@/components/ui/dialog";
 
 // --- TYPES ---
 interface Take {
@@ -102,7 +102,7 @@ export default function DirectorsLabPage({
   async function fetchData() {
     try {
       const sRes = await fetch(
-        `http://127.0.0.1:8000/projects/${projectId}/scenes`
+        `http://127.0.0.1:8000/projects/${projectId}/scenes`,
       );
       if (sRes.ok) {
         const data = await sRes.json();
@@ -119,7 +119,7 @@ export default function DirectorsLabPage({
         });
 
         const currentIndex = allShots.findIndex(
-          (s) => s.id.toString() === shotId
+          (s) => s.id.toString() === shotId,
         );
 
         if (currentIndex !== -1) {
@@ -260,7 +260,7 @@ export default function DirectorsLabPage({
       setActiveVideo(
         shot?.video_url && shot.video_url !== takeToDelete.video_url
           ? shot.video_url
-          : null
+          : null,
       );
     }
 
