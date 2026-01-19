@@ -40,7 +40,7 @@ import {
 import {
   getProject,
   getProjectAssets,
-  getScenes,
+  getScene,
   createScene,
   deleteAsset,
   updateAsset,
@@ -86,7 +86,7 @@ export default function ProjectDashboard({
       setAssets(aData);
 
       // 3. Get Scenes
-      const sData = await getScenes(projectId);
+      const sData = await getScene(projectId);
       setScenes(sData);
     } catch (error) {
       console.error("Failed to fetch data", error);
@@ -192,9 +192,9 @@ export default function ProjectDashboard({
   const locAssets = assets.filter((a) => a.type === "loc");
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-white overflow-hidden font-sans selection:bg-[#D2FF44]/30">
+    <div className="flex h-full flex-1 bg-zinc-950 text-white overflow-hidden font-sans selection:bg-[#D2FF44]/30">
       {/* 1. LEFT SIDEBAR: THE BINDER (Global Assets) */}
-      <div className="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900/30">
+      <div className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-900/30 flex-shrink-0">
         <div className="p-6 border-b border-zinc-800">
           <Button
             variant="ghost"
@@ -276,7 +276,7 @@ export default function ProjectDashboard({
       {/* 2. MAIN STAGE: SCENE GRID */}
       <div className="flex-1 flex flex-col bg-zinc-950 relative overflow-hidden">
         {/* Header */}
-        <div className="h-20 border-b border-zinc-800 flex items-center justify-between px-10 bg-zinc-900/20 backdrop-blur-sm">
+        <div className="h-16 md:h-20 border-b border-zinc-800 flex items-center justify-between px-6 md:px-10 bg-zinc-900/20 backdrop-blur-sm flex-shrink-0">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-3">
               <Layout className="text-[#D2FF44]" /> Scenes Overview
@@ -294,7 +294,7 @@ export default function ProjectDashboard({
         </div>
 
         {/* Content */}
-        <ScrollArea className="flex-1 p-10">
+        <ScrollArea className="flex-1 p-6 lg:p-10">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
             {/* NEW SCENE BUTTON (Empty State) */}
             <button
@@ -312,7 +312,7 @@ export default function ProjectDashboard({
               <div
                 key={scene.id}
                 onClick={() =>
-                  router.push(`/studio/${projectId}/scene/${scene.id}`)
+                  router.push(`/studio/${projectId}/scenes/${scene.id}`)
                 }
                 className="aspect-[16/9] bg-zinc-900 rounded-xl border border-zinc-800 p-6 flex flex-col justify-between hover:border-[#D2FF44] hover:shadow-[0_0_30px_rgba(210,255,68,0.1)] transition-all cursor-pointer group relative overflow-hidden"
               >

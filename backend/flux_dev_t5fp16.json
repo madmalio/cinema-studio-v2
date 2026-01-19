@@ -1,8 +1,14 @@
 {
   "8": {
     "inputs": {
-      "samples": ["40", 0],
-      "vae": ["10", 0]
+      "samples": [
+        "40",
+        0
+      ],
+      "vae": [
+        "10",
+        0
+      ]
     },
     "class_type": "VAEDecode",
     "_meta": {
@@ -35,7 +41,10 @@
       "scheduler": "normal",
       "steps": 25,
       "denoise": 1,
-      "model": ["46", 0]
+      "model": [
+        "46",
+        0
+      ]
     },
     "class_type": "BasicScheduler",
     "_meta": {
@@ -44,8 +53,14 @@
   },
   "38": {
     "inputs": {
-      "model": ["46", 0],
-      "conditioning": ["42", 0]
+      "model": [
+        "46",
+        0
+      ],
+      "conditioning": [
+        "42",
+        0
+      ]
     },
     "class_type": "BasicGuider",
     "_meta": {
@@ -55,7 +70,10 @@
   "39": {
     "inputs": {
       "filename_prefix": "ComfyUI",
-      "images": ["8", 0]
+      "images": [
+        "8",
+        0
+      ]
     },
     "class_type": "SaveImage",
     "_meta": {
@@ -64,11 +82,26 @@
   },
   "40": {
     "inputs": {
-      "noise": ["45", 0],
-      "guider": ["38", 0],
-      "sampler": ["47", 0],
-      "sigmas": ["17", 0],
-      "latent_image": ["44", 0]
+      "noise": [
+        "45",
+        0
+      ],
+      "guider": [
+        "38",
+        0
+      ],
+      "sampler": [
+        "47",
+        0
+      ],
+      "sigmas": [
+        "17",
+        0
+      ],
+      "latent_image": [
+        "44",
+        0
+      ]
     },
     "class_type": "SamplerCustomAdvanced",
     "_meta": {
@@ -78,7 +111,10 @@
   "42": {
     "inputs": {
       "guidance": 3.5,
-      "conditioning": ["43", 0]
+      "conditioning": [
+        "43",
+        0
+      ]
     },
     "class_type": "FluxGuidance",
     "_meta": {
@@ -88,7 +124,10 @@
   "43": {
     "inputs": {
       "text": "beautiful photography of a ginger haired artist with Lots of Colorful coloursplashes in face and pn her hands, she is natural, having her hair in a casual bun, looking happily into camera, cinematic,",
-      "clip": ["11", 0]
+      "clip": [
+        "11",
+        0
+      ]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
@@ -108,7 +147,7 @@
   },
   "45": {
     "inputs": {
-      "noise_seed": 775824250319287
+      "noise_seed": 967414852166141
     },
     "class_type": "RandomNoise",
     "_meta": {
@@ -121,7 +160,10 @@
       "base_shift": 0.5,
       "width": 1024,
       "height": 1024,
-      "model": ["48", 0]
+      "model": [
+        "48",
+        0
+      ]
     },
     "class_type": "ModelSamplingFlux",
     "_meta": {

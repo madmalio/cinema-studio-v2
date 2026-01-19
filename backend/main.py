@@ -5,7 +5,9 @@ load_dotenv()
 import sqlite3
 import cv2
 import uuid
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from pathlib import Path
+from typing import Optional
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -16,11 +18,14 @@ from runpod_client import generate_cinematic_image
 from local_video import generate_wan_video 
 from director import get_director_prompt 
 
-# CONFIG
-OUTPUT_DIR = "generated"
-FACES_DIR = "assets/faces"  # New directory for character faces
+# --- CONFIG (Absolute Paths Fix) ---
+# This ensures we always find the folders, regardless of where python is run from
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "generated"
+FACES_DIR = BASE_DIR / "assets" / "faces"
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "*"], 
@@ -30,12 +35,11 @@ app.add_middleware(
 )
 
 # Ensure directories exist
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
-if not os.path.exists(FACES_DIR):
-    os.makedirs(FACES_DIR)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FACES_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount("/generated", StaticFiles(directory=OUTPUT_DIR), name="generated")
+# Mount Static Files with Absolute Path
+app.mount("/generated", StaticFiles(directory=str(OUTPUT_DIR)), name="generated")
 
 def get_db_connection():
     conn = sqlite3.connect('studio.db')
@@ -103,6 +107,9 @@ class ShotAnimateRequest(BaseModel):
     style: str = "Cinematic"
     camera_move: str = "Push In"
 
+class VideoRequest(BaseModel):
+    prompt: str
+
 class AssetUpdate(BaseModel):
     name: str
 
@@ -136,7 +143,7 @@ class ReorderRequest(BaseModel):
 def read_root():
     return {"message": "Cinema Studio Backend v8.0 (Character Profile Engine Enabled)"}
 
-# --- CHARACTER ROUTES (NEW) ---
+# --- CHARACTER ROUTES ---
 @app.get("/characters")
 def read_characters():
     conn = get_db_connection()
@@ -151,31 +158,35 @@ def create_character(
     image: UploadFile = File(...)
 ):
     try:
-        # 1. Save Face Image
+        # 1. Save Face Image using Absolute Path
         file_extension = image.filename.split(".")[-1]
         safe_filename = f"{name.replace(' ', '_').lower()}_{uuid.uuid4().hex[:6]}.{file_extension}"
-        file_path = os.path.join(FACES_DIR, safe_filename)
+        file_path = FACES_DIR / safe_filename
         
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
-        # 2. Save to DB
+        # 2. Save to DB (Store relative path or filename if served via custom endpoint, here storing absolute for internal use, but careful with serving)
+        # Actually, let's keep consistent with how we serve it in get_face_image
+        # We store the absolute path for internal use, but we might want a URL for frontend. 
+        # For now, keeping your logic:
+        
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("INSERT INTO characters (name, description, face_path) VALUES (?, ?, ?)", 
-                       (name, description, file_path))
+                       (name, description, str(file_path)))
         new_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
-        return {"success": True, "character": {"id": new_id, "name": name, "face_path": file_path}}
+        return {"success": True, "character": {"id": new_id, "name": name, "face_path": str(file_path)}}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 @app.get("/assets/faces/{filename}")
 def get_face_image(filename: str):
-    file_path = os.path.join(FACES_DIR, filename)
-    if os.path.exists(file_path):
+    file_path = FACES_DIR / filename
+    if file_path.exists():
         return FileResponse(file_path)
     return {"error": "File not found"}
 
@@ -246,7 +257,16 @@ def delete_asset(asset_id: int):
     asset = cursor.execute("SELECT image_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if asset:
         try:
-            os.remove(os.path.join(OUTPUT_DIR, asset['image_path'].split("/")[-1]))
+            # Handle both URL and File paths
+            path_str = asset['image_path']
+            if "http" in path_str:
+                filename = path_str.split("/")[-1]
+                file_path = OUTPUT_DIR / filename
+            else:
+                file_path = Path(path_str)
+                
+            if file_path.exists():
+                os.remove(file_path)
         except: pass
     cursor.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     conn.commit()
@@ -263,6 +283,17 @@ def get_scenes(project_id: int):
         results.append({**dict(scene), "shots": shots})
     conn.close()
     return {"scenes": results}
+
+# --- ADDED: GET SINGLE SCENE (Fixes Scene Detail Page) ---
+@app.get("/scenes/{scene_id}")
+def get_scene(scene_id: int):
+    conn = get_db_connection()
+    scene = conn.execute('SELECT * FROM scenes WHERE id = ?', (scene_id,)).fetchone()
+    shots = conn.execute('SELECT * FROM shots WHERE scene_id = ? ORDER BY order_index ASC', (scene_id,)).fetchall()
+    conn.close()
+    if not scene:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    return {"scene": dict(scene), "shots": [dict(s) for s in shots]}
 
 @app.post("/projects/{project_id}/scenes")
 def create_scene(project_id: int, scene: Scene):
@@ -344,8 +375,8 @@ def delete_shot(shot_id: int):
     for url in files_to_delete:
         try:
             filename = url.split("/")[-1]
-            file_path = os.path.join(OUTPUT_DIR, filename)
-            if os.path.exists(file_path):
+            file_path = OUTPUT_DIR / filename
+            if file_path.exists():
                 os.remove(file_path)
         except Exception as e:
             print(f"⚠️ Error deleting file {url}: {e}")
@@ -355,8 +386,12 @@ def delete_shot(shot_id: int):
     conn.close()
     return {"success": True, "message": "Shot deleted"}
 
+# --- GENERATE ENDPOINT (Fixed with Absolute URL) ---
 @app.post("/generate")
-def generate_asset(request: GenerateRequest):
+def generate_asset(
+    request: GenerateRequest,
+    x_comfy_url: Optional[str] = Header("http://127.0.0.1:8188")
+):
     try:
         conn = get_db_connection()
         project = conn.execute('SELECT aspect_ratio FROM projects WHERE id = ?', (request.project_id,)).fetchone()
@@ -367,18 +402,61 @@ def generate_asset(request: GenerateRequest):
         if request.chroma_key:
             final_prompt += ", solid hex code #00FF00 green background, chroma key, flat studio lighting, no shadows on wall, separation from background"
 
-        image_path = generate_cinematic_image(prompt=final_prompt, aspect_ratio=ratio, camera=request.camera, lens=request.lens, focal_length=request.focal_length)
-        full_image_url = f"http://127.0.0.1:8000{image_path}"
+        # Call Generator
+        result = generate_cinematic_image(
+            prompt=final_prompt, 
+            aspect_ratio=ratio, 
+            camera=request.camera, 
+            lens=request.lens, 
+            focal_length=request.focal_length,
+            chroma=request.chroma_key,
+            base_url=x_comfy_url
+        )
         
+        if isinstance(result, dict) and "error" in result:
+             raise Exception(result["error"])
+        
+        # --- URL CONSTRUCTION ---
+        if isinstance(result, dict):
+            # result["image_url"] is "/generated/flux_xyz.png"
+            relative_path = result["image_url"]
+            full_image_url = f"http://127.0.0.1:8000{relative_path}"
+        else:
+            full_image_url = f"http://127.0.0.1:8000{result}"
+        
+        # Save to DB
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO assets (project_id, type, name, prompt, image_path) VALUES (?, ?, ?, ?, ?)', (request.project_id, request.type, request.name, request.prompt, full_image_url))
         conn.commit()
         new_id = cursor.lastrowid
         conn.close()
+        
         return {"success": True, "image_url": full_image_url, "asset_id": new_id}
+
     except Exception as e:
+        print(f"❌ Gen Error: {e}")
         return {"success": False, "error": str(e)}
+
+# --- VIDEO ENDPOINT ---
+@app.post("/generate/video")
+def generate_video(
+    req: VideoRequest,
+    x_comfy_url: Optional[str] = Header("http://127.0.0.1:8188")
+):
+    print(f"🎥 Generating Video on {x_comfy_url}...")
+    
+    video_path = generate_wan_video(
+        prompt=req.prompt, 
+        server_url=x_comfy_url
+    )
+    
+    if not video_path:
+        raise HTTPException(status_code=500, detail="Video generation failed")
+        
+    filename = os.path.basename(video_path)
+    
+    return {"status": "success", "video_url": f"http://127.0.0.1:8000/generated/{filename}"}
 
 @app.get("/shots/{shot_id}/takes")
 def get_shot_takes(shot_id: int):
@@ -401,7 +479,11 @@ def delete_take(take_id: int):
     cursor = conn.cursor()
     take = cursor.execute("SELECT video_url FROM takes WHERE id = ?", (take_id,)).fetchone()
     if take and take['video_url']:
-        try: os.remove(os.path.join(OUTPUT_DIR, take['video_url'].split("/")[-1]))
+        try: 
+            filename = take['video_url'].split("/")[-1]
+            file_path = OUTPUT_DIR / filename
+            if file_path.exists():
+                os.remove(file_path)
         except: pass
     cursor.execute("DELETE FROM takes WHERE id = ?", (take_id,))
     conn.commit()
@@ -417,7 +499,11 @@ def enhance_prompt_endpoint(request: DirectorRequest):
         return {"success": False, "error": str(e)}
 
 @app.post("/shots/{shot_id}/animate")
-def animate_shot_endpoint(shot_id: int, request: ShotAnimateRequest):
+def animate_shot_endpoint(
+    shot_id: int, 
+    request: ShotAnimateRequest,
+    x_comfy_url: Optional[str] = Header("http://127.0.0.1:8188")
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     shot = cursor.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
@@ -426,13 +512,20 @@ def animate_shot_endpoint(shot_id: int, request: ShotAnimateRequest):
         return {"success": False, "error": "Shot has no keyframe"}
     
     filename = shot['keyframe_url'].split("/")[-1]
-    local_path = os.path.join(OUTPUT_DIR, filename)
-    if not os.path.exists(local_path):
+    local_path = OUTPUT_DIR / filename
+    if not local_path.exists():
         conn.close()
         return {"success": False, "error": "Source file missing"}
     
     try:
-        video_web_path = generate_wan_video(local_image_path=local_path, prompt=request.prompt, style=request.style, camera=request.camera_move)
+        video_web_path = generate_wan_video(
+            local_image_path=str(local_path), 
+            prompt=request.prompt, 
+            style=request.style, 
+            camera=request.camera_move,
+            server_url=x_comfy_url
+        )
+        
         full_video_url = f"http://127.0.0.1:8000{video_web_path}"
         cursor.execute("UPDATE shots SET video_url = ?, status = 'complete' WHERE id = ?", (full_video_url, shot_id))
         cursor.execute("INSERT INTO takes (shot_id, video_url, prompt) VALUES (?, ?, ?)", (shot_id, full_video_url, request.prompt))
@@ -484,12 +577,12 @@ def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
 
     try:
         video_filename = video_url_to_use.split("/")[-1]
-        local_video_path = os.path.join(OUTPUT_DIR, video_filename)
+        local_video_path = OUTPUT_DIR / video_filename
         
-        if not os.path.exists(local_video_path):
+        if not local_video_path.exists():
              return {"success": False, "error": f"Video file not found: {video_filename}"}
 
-        cap = cv2.VideoCapture(local_video_path)
+        cap = cv2.VideoCapture(str(local_video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames - 1)
         ret, frame = cap.read()
@@ -499,8 +592,8 @@ def stitch_shot_endpoint(shot_id: int, request: StitchRequest):
             return {"success": False, "error": "Could not extract last frame"}
             
         new_filename = f"stitch_from_{shot_id}_{total_frames}.jpg"
-        new_file_path = os.path.join(OUTPUT_DIR, new_filename)
-        cv2.imwrite(new_file_path, frame)
+        new_file_path = OUTPUT_DIR / new_filename
+        cv2.imwrite(str(new_file_path), frame)
         new_keyframe_url = f"http://127.0.0.1:8000/generated/{new_filename}"
         
         shot_data = cursor.execute("SELECT scene_id, order_index FROM shots WHERE id = ?", (shot_id,)).fetchone()
@@ -534,18 +627,18 @@ if __name__ == "__main__":
         print("   ⚠️ Director Engine (Gemini): OFF (Missing GEMINI_API_KEY in .env)")
 
     # 2. Check Directories
-    if os.path.exists(OUTPUT_DIR):
+    if OUTPUT_DIR.exists():
         print(f"   ✅ Output Directory: {OUTPUT_DIR} (Ready)")
     else:
         print(f"   ⚠️ Output Directory: {OUTPUT_DIR} (Creating...)")
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # 3. Check Faces Dir
-    if os.path.exists(FACES_DIR):
+    if FACES_DIR.exists():
         print(f"   ✅ Faces Directory: {FACES_DIR} (Ready)")
     else:
         print(f"   ⚠️ Faces Directory: {FACES_DIR} (Creating...)")
-        os.makedirs(FACES_DIR, exist_ok=True)
+        FACES_DIR.mkdir(parents=True, exist_ok=True)
 
     print("   🚀 Starting Cinema Studio Backend on port 8000...\n")
     

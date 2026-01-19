@@ -12,111 +12,144 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Zap, CheckCircle2, XCircle } from "lucide-react";
+import { Settings, Zap, Server, Check, X, Loader2, Cpu } from "lucide-react";
+import { Badge } from "@/components/ui/badge"; // You might not have this, so I'll use a styled span or standard div if needed, but standard divs are safer if I don't check for Badge component availability. I'll use standard Tailwind.
 
 export function SettingsModal() {
   const [isOpen, setIsOpen] = useState(false);
-  const [runpodUrl, setRunpodUrl] = useState("");
-  const [isTesting, setIsTesting] = useState(false);
-  const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [url, setUrl] = useState("");
+  const [status, setStatus] = useState<
+    "idle" | "testing" | "success" | "error"
+  >("idle");
 
-  // Load from LocalStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem("RUNPOD_URL");
-    if (saved) setRunpodUrl(saved);
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("COMFY_API_URL");
+      setUrl(saved || "http://127.0.0.1:8188");
+    }
   }, []);
 
-  const handleSave = () => {
-    // Basic formatting: remove trailing slash
-    const formatted = runpodUrl.replace(/\/$/, "");
-    localStorage.setItem("RUNPOD_URL", formatted);
-    setRunpodUrl(formatted);
-    setIsOpen(false);
-    // Ideally, trigger a context update or window reload if needed
-    window.location.reload();
-  };
-
-  const testConnection = async () => {
-    setIsTesting(true);
-    setStatus("idle");
+  const handleTest = async () => {
+    setStatus("testing");
     try {
-      // Simple ping to ComfyUI (usually /system_stats or /object_info exists)
-      // Note: You might need a Next.js API proxy to avoid CORS if hitting RunPod directly
-      const res = await fetch("/api/proxy-test", {
+      const res = await fetch("/api/test-connection", {
         method: "POST",
-        body: JSON.stringify({ url: runpodUrl }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
       });
-      if (res.ok) setStatus("success");
-      else setStatus("error");
+
+      if (res.ok) {
+        setStatus("success");
+      } else {
+        setStatus("error");
+      }
     } catch (e) {
       setStatus("error");
-    } finally {
-      setIsTesting(false);
     }
+  };
+
+  const handleSave = () => {
+    const cleanUrl = url.replace(/\/$/, "");
+    localStorage.setItem("COMFY_API_URL", cleanUrl);
+    setIsOpen(false);
+    window.location.reload();
   };
 
   return (
     <>
-      {/* Trigger Button (Put this in your Sidebar) */}
       <Button
         variant="ghost"
         size="icon"
         onClick={() => setIsOpen(true)}
-        className="text-zinc-500 hover:text-white"
-        title="GPU Settings"
+        className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-500 transition-all"
+        title="Settings"
       >
-        <Settings size={20} />
+        <Settings size={14} />
       </Button>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="bg-zinc-950 border-zinc-800 text-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="text-[#D2FF44]" size={20} /> GPU Connection
+        <DialogContent className="bg-zinc-950 border border-zinc-800 text-white sm:max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+          <DialogHeader className="pb-4 border-b border-zinc-900">
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+              <Settings className="text-zinc-500" size={20} />
+              <span>Studio Settings</span>
             </DialogTitle>
-            <DialogDescription>
-              Connect to your ComfyUI instance running on RunPod or Localhost.
+            <DialogDescription className="text-zinc-500">
+              Configure global engine preferences and connections.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>ComfyUI API URL</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={runpodUrl}
-                  onChange={(e) => setRunpodUrl(e.target.value)}
-                  placeholder="https://your-pod-id-8188.proxy.runpod.net"
-                  className="bg-zinc-900 border-zinc-800 font-mono text-xs"
-                />
-                <Button
-                  onClick={testConnection}
-                  disabled={!runpodUrl || isTesting}
-                  variant="outline"
-                  className="border-zinc-700"
-                >
-                  {isTesting ? "..." : "Test"}
-                </Button>
+          <div className="py-6 space-y-6">
+            {/* SECTION: AI ENGINE */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Cpu size={14} className="text-[#D2FF44]" /> Video Generation Engine
+                </Label>
+
+                {/* STATUS BADGE */}
+                {status !== "idle" && (
+                  <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${status === 'success' ? 'bg-[#D2FF44]/10 text-[#D2FF44] border border-[#D2FF44]/20' :
+                      status === 'error' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
+                        'bg-zinc-800 text-zinc-400'
+                    }`}>
+                    {status === 'testing' && <Loader2 size={10} className="animate-spin" />}
+                    {status === 'success' && <Check size={10} />}
+                    {status === 'error' && <X size={10} />}
+                    <span className="uppercase">
+                      {status === 'testing' ? 'Testing...' : status === 'success' ? 'Connected' : 'Connection Failed'}
+                    </span>
+                  </div>
+                )}
               </div>
-              {status === "success" && (
-                <p className="text-xs text-[#D2FF44] flex items-center gap-1">
-                  <CheckCircle2 size={12} /> Connected Successfully
-                </p>
-              )}
-              {status === "error" && (
-                <p className="text-xs text-red-500 flex items-center gap-1">
-                  <XCircle size={12} /> Connection Failed
-                </p>
-              )}
+
+              <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/50 space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-xs text-zinc-400">ComfyUI Endpoint</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Server className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
+                      <Input
+                        value={url}
+                        onChange={(e) => {
+                          setUrl(e.target.value);
+                          setStatus("idle");
+                        }}
+                        className="bg-black border-zinc-800 pl-9 font-mono text-xs focus-visible:ring-[#D2FF44]"
+                        placeholder="http://127.0.0.1:8188"
+                      />
+                    </div>
+                    <Button
+                      onClick={handleTest}
+                      disabled={status === "testing" || !url}
+                      variant="secondary"
+                      className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
+                    >
+                      Test
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-zinc-600 leading-relaxed">
+                    The Wan Video generation model requires a running ComfyUI instance.
+                    Ensure your backend is reachable from this client.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="border-t border-zinc-900 pt-4">
+            <Button
+              variant="ghost"
+              onClick={() => setIsOpen(false)}
+              className="text-zinc-500 hover:text-white"
+            >
+              Cancel
+            </Button>
             <Button
               onClick={handleSave}
               className="bg-[#D2FF44] text-black font-bold hover:bg-[#bce63b]"
             >
-              Save Connection
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

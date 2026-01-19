@@ -43,10 +43,18 @@ import {
   SelectGroup,
   SelectLabel,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 // --- API IMPORTS ---
 import {
-  getProject, // Needed for project name
+  getProject,
   getProjectAssets,
   deleteAsset,
   generateAsset,
@@ -93,6 +101,10 @@ export default function CharactersListPage({
   const [selectedFocal, setSelectedFocal] = useState("50mm");
   const [isChroma, setIsChroma] = useState(false);
 
+  // --- DELETE MODAL STATE ---
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [assetToDelete, setAssetToDelete] = useState<number | null>(null);
+
   // --- LOAD DATA ---
   async function loadCharacters() {
     try {
@@ -115,11 +127,23 @@ export default function CharactersListPage({
   }, [id]);
 
   // --- ACTIONS ---
-  const handleDelete = async (e: React.MouseEvent, assetId: number) => {
+
+  const openDeleteModal = (e: React.MouseEvent, assetId: number) => {
     e.stopPropagation();
-    if (confirm("Are you sure you want to delete this character?")) {
-      await deleteAsset(assetId);
-      loadCharacters();
+    setAssetToDelete(assetId);
+    setIsDeleteOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (assetToDelete) {
+      try {
+        await deleteAsset(assetToDelete);
+        setAssetToDelete(null);
+        setIsDeleteOpen(false);
+        loadCharacters();
+      } catch (e) {
+        alert("Failed to delete asset.");
+      }
     }
   };
 
@@ -129,7 +153,8 @@ export default function CharactersListPage({
     setGeneratedImage(null);
     setNewAssetId(null);
 
-    const fullPrompt = `${prompt}, shot on ${selectedCamera}, ${selectedLens}, ${selectedFocal}, cinematic lighting, photorealistic profile portrait${isChroma ? ", green screen background, chroma key, flat lighting" : ""}`;
+    const fullPrompt = `${prompt}, shot on ${selectedCamera}, ${selectedLens}, ${selectedFocal}, cinematic lighting, photorealistic profile portrait${isChroma ? ", green screen background, chroma key, flat lighting" : ""
+      }`;
 
     try {
       const data = await generateAsset({
@@ -137,6 +162,10 @@ export default function CharactersListPage({
         type: "cast",
         name: name || "New Character",
         prompt: fullPrompt,
+        camera: selectedCamera,
+        lens: selectedLens,
+        focal_length: selectedFocal,
+        chroma: isChroma,
       });
 
       if (data.success) {
@@ -205,28 +234,27 @@ export default function CharactersListPage({
     return (
       <div className="min-h-screen bg-zinc-950 text-white font-sans selection:bg-[#D2FF44]/30 flex flex-col">
         {/* HEADER */}
-        <header className="h-20 border-b border-zinc-800 flex items-center justify-between px-8 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              onClick={() => router.push(`/studio/${id}`)}
-              className="text-zinc-400 hover:text-white hover:bg-zinc-800"
+        <header className="min-h-20 py-4 border-b border-zinc-800 flex items-center justify-between gap-4 px-8 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10">
+          <div className="flex items-center gap-4 min-w-0">
+            <Link
+              href={`/studio/${id}`}
+              className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors"
             >
-              <ArrowLeft size={20} className="mr-2" /> Back
-            </Button>
+              <ArrowLeft size={20} />
+            </Link>
             <div className="h-8 w-px bg-zinc-800" />
-            <div>
-              <h1 className="text-xl font-bold flex items-center gap-2">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold flex items-center gap-2 whitespace-nowrap">
                 <Users className="text-[#D2FF44]" /> Cast & Characters
               </h1>
-              <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest -mt-1">
+              <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest -mt-1 truncate max-w-[40vw]">
                 {projectName}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="relative w-64">
+            <div className="relative w-40 sm:w-56 lg:w-64">
               <Search
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
                 size={14}
@@ -235,12 +263,12 @@ export default function CharactersListPage({
                 placeholder="Search cast..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-zinc-900 border-zinc-800 pl-9 focus:border-[#D2FF44] h-10"
+                className="bg-zinc-900 border-zinc-800 pl-9 focus:border-[#D2FF44] h-10 transition-all"
               />
             </div>
             <Button
               onClick={() => setViewMode("create")}
-              className="bg-[#D2FF44] text-black font-bold hover:bg-[#bce63b] h-10 px-6 shadow-[0_0_15px_rgba(210,255,68,0.2)]"
+              className="bg-[#D2FF44] text-black font-bold hover:bg-[#bce63b] h-10 px-6 shadow-[0_0_15px_rgba(210,255,68,0.2)] whitespace-nowrap"
             >
               <Plus size={18} className="mr-2" /> New Character
             </Button>
@@ -254,8 +282,8 @@ export default function CharactersListPage({
               <Loader2 className="animate-spin mr-2" /> Loading Cast...
             </div>
           ) : filteredChars.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-zinc-500 opacity-50 select-none">
-              <User size={64} className="mb-4" />
+            <div className="flex flex-col items-center justify-center h-[60vh] text-zinc-500 opacity-50 select-none border-2 border-dashed border-zinc-800 rounded-2xl">
+              <User size={64} className="mb-4 text-zinc-700" />
               <h2 className="text-xl font-bold">No Characters Found</h2>
               <p className="text-sm mt-2">
                 Create a new character to get started.
@@ -278,9 +306,7 @@ export default function CharactersListPage({
               {filteredChars.map((char) => (
                 <div
                   key={char.id}
-                  onClick={() =>
-                    router.push(`/studio/${id}/characters/${char.id}`)
-                  }
+                  onClick={() => router.push(`/studio/${id}/characters/${char.id}`)}
                   className="group relative aspect-[3/4] bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800 hover:border-[#D2FF44] hover:shadow-[0_0_30px_rgba(210,255,68,0.15)] transition-all cursor-pointer"
                 >
                   <img
@@ -313,7 +339,7 @@ export default function CharactersListPage({
                         <DropdownMenuContent className="bg-zinc-950 border-zinc-800 text-white">
                           <DropdownMenuItem
                             className="text-red-500 focus:text-red-500 focus:bg-red-500/10"
-                            onClick={(e) => handleDelete(e, char.id)}
+                            onClick={(e) => openDeleteModal(e, char.id)}
                           >
                             <Trash2 size={14} className="mr-2" /> Delete
                           </DropdownMenuItem>
@@ -326,24 +352,51 @@ export default function CharactersListPage({
             </div>
           )}
         </main>
+
+        {/* DELETE MODAL (MATCHED TO BRAND UI) */}
+        <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+          <DialogContent className="bg-zinc-950 border-[#D2FF44] text-white sm:max-w-md shadow-[0_0_50px_rgba(210,255,68,0.15)]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+                <Trash2 className="text-[#D2FF44]" /> Delete Character?
+              </DialogTitle>
+              <DialogDescription className="text-zinc-400">
+                Are you sure you want to delete this character? This will
+                permanently delete the file. This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setIsDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={confirmDelete}
+                className="bg-[#D2FF44] hover:bg-[#bce63b] text-black font-bold"
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
 
-  // --- RENDER: CREATE VIEW (With Tabs matching UI) ---
+  // --- RENDER: CREATE VIEW ---
   return (
     <div className="flex h-screen bg-zinc-950 text-white font-sans selection:bg-[#D2FF44]/30 overflow-hidden">
       {/* Left: Controls */}
-      <div className="w-[420px] border-r border-zinc-800 flex flex-col bg-zinc-900/10 flex-shrink-0">
-        <div className="h-16 border-b border-zinc-800 flex items-center px-6 bg-zinc-900/50 backdrop-blur-sm justify-between flex-shrink-0">
-          <h1 className="font-bold text-lg flex items-center gap-2">
+      <div className="w-[420px] border-r border-zinc-800 flex flex-col bg-zinc-900/10 flex-shrink-0 min-h-0">
+        {/* HEADER (matched sizing, prevents wrap squish) */}
+        <div className="min-h-20 py-4 border-b border-zinc-800 flex items-center px-8 bg-zinc-900/50 backdrop-blur-md justify-between flex-shrink-0 sticky top-0 z-10 gap-4">
+          <h1 className="font-bold text-lg flex items-center gap-2 whitespace-nowrap">
             <Wand2 size={18} className="text-[#D2FF44]" /> New Identity
           </h1>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setViewMode("grid")}
-            className="text-zinc-500 hover:text-white"
+            className="text-zinc-500 hover:text-white whitespace-nowrap"
           >
             Cancel
           </Button>
@@ -536,7 +589,10 @@ export default function CharactersListPage({
                         <button
                           key={focal}
                           onClick={() => setSelectedFocal(focal)}
-                          className={`text-[10px] h-8 rounded border transition-all font-bold ${selectedFocal === focal ? "bg-[#D2FF44] text-black border-[#D2FF44]" : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-600"}`}
+                          className={`text-[10px] h-8 rounded border transition-all font-bold ${selectedFocal === focal
+                              ? "bg-[#D2FF44] text-black border-[#D2FF44]"
+                              : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-600"
+                            }`}
                         >
                           {focal}
                         </button>
@@ -545,17 +601,24 @@ export default function CharactersListPage({
                   </div>
                   <div
                     onClick={() => setIsChroma(!isChroma)}
-                    className={`mt-4 border rounded-lg p-3 cursor-pointer transition-all flex items-center justify-between group ${isChroma ? "bg-[#D2FF44]/10 border-[#D2FF44]" : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"}`}
+                    className={`mt-4 border rounded-lg p-3 cursor-pointer transition-all flex items-center justify-between group ${isChroma
+                        ? "bg-[#D2FF44]/10 border-[#D2FF44]"
+                        : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
+                      }`}
                   >
                     <div className="flex items-center gap-3">
                       <div
-                        className={`p-1.5 rounded-full transition-colors ${isChroma ? "bg-[#D2FF44] text-black" : "bg-zinc-900 text-zinc-600"}`}
+                        className={`p-1.5 rounded-full transition-colors ${isChroma
+                            ? "bg-[#D2FF44] text-black"
+                            : "bg-zinc-900 text-zinc-600"
+                          }`}
                       >
                         <Layers size={14} />
                       </div>
                       <div>
                         <h3
-                          className={`text-xs font-bold transition-colors ${isChroma ? "text-[#D2FF44]" : "text-zinc-400"}`}
+                          className={`text-xs font-bold transition-colors ${isChroma ? "text-[#D2FF44]" : "text-zinc-400"
+                            }`}
                         >
                           Green Screen Mode
                         </h3>
@@ -565,12 +628,16 @@ export default function CharactersListPage({
                       </div>
                     </div>
                     <div
-                      className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${isChroma ? "bg-[#D2FF44] border-[#D2FF44]" : "border-zinc-700"}`}
+                      className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${isChroma
+                          ? "bg-[#D2FF44] border-[#D2FF44]"
+                          : "border-zinc-700"
+                        }`}
                     />
                   </div>
                 </div>
               </div>
             </div>
+
             {/* FOOTER: GENERATE */}
             <div className="p-6 border-t border-zinc-800 bg-zinc-900/30 flex-shrink-0">
               <Button
